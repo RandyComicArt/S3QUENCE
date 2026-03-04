@@ -95,8 +95,6 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
     private static final int BACKDROP_GRID_SPACING = 52;
     private static final int RIPPLE_MAX_COUNT = 16;
-    private static final long RIPPLE_SPAWN_COOLDOWN_MS = 44L;
-    private static final int RIPPLE_MIN_GAP = 120;
 
     private final Timer timer;
     private final RoundManager roundManager = new RoundManager();
@@ -124,7 +122,6 @@ public class GamePanel extends JPanel implements ActionListener {
     private long lastTickNanos = System.nanoTime();
     private int lastHitDamage;
     private long lastHitUntilMs;
-    private long lastRippleSpawnMs;
 
     private static class BackgroundRipple {
         int x;
@@ -487,7 +484,7 @@ public class GamePanel extends JPanel implements ActionListener {
             @Override
             public void actionPerformed(ActionEvent e) {
                 if (screen == ScreenState.ENCOUNTER && !encounterIntroActive) {
-                    spawnInputRipple(direction);
+                    spawnInputRipple(direction.ordinal());
                     handleEncounterInput(direction.ordinal());
                 }
             }
@@ -1147,40 +1144,21 @@ public class GamePanel extends JPanel implements ActionListener {
         outWarp[1] = warpY;
     }
 
-    private void spawnInputRipple(Direction direction) {
-        long nowMs = System.currentTimeMillis();
-        if (nowMs - lastRippleSpawnMs < RIPPLE_SPAWN_COOLDOWN_MS) {
+    private void spawnInputRipple(int symbol) {
+        List<Integer> sequence = roundManager.getSequence();
+        if (sequence.isEmpty()) {
             return;
         }
-
-        int centerX = GameConfig.WIDTH / 2;
-        int centerY = ARENA_Y + (ARENA_H / 2);
-        int offset = 188;
-
-        if (direction == Direction.UP) {
-            centerY -= offset;
-        } else if (direction == Direction.DOWN) {
-            centerY += offset;
-        } else if (direction == Direction.LEFT) {
-            centerX -= offset;
-        } else {
-            centerX += offset;
+        int count = sequence.size();
+        int sequenceIndex = findRippleSequenceIndex(sequence, roundManager.getProgressIndex(), symbol);
+        if (sequenceIndex < 0) {
+            return;
         }
-
-        int spawnX = centerX;
-        int spawnY = centerY;
-        for (int attempt = 0; attempt < 7; attempt++) {
-            int spread = 110 + (attempt * 12);
-            int candidateX = centerX + (random.nextInt((spread * 2) + 1) - spread);
-            int candidateY = centerY + (random.nextInt((spread * 2) + 1) - spread);
-            candidateX = snapToGrid(clampInt(candidateX, 36, GameConfig.WIDTH - 36), BACKDROP_GRID_SPACING);
-            candidateY = snapToGrid(clampInt(candidateY, 36, GameConfig.HEIGHT - 36), BACKDROP_GRID_SPACING);
-            if (isRipplePositionSpaced(candidateX, candidateY, nowMs, RIPPLE_MIN_GAP) || attempt == 6) {
-                spawnX = candidateX;
-                spawnY = candidateY;
-                break;
-            }
-        }
+        int totalWidth = (count * GameConfig.BOX_SIZE) + ((count - 1) * GameConfig.BOX_GAP);
+        int startX = ARENA_X + (ARENA_W - totalWidth) / 2;
+        int spawnX = startX + (sequenceIndex * (GameConfig.BOX_SIZE + GameConfig.BOX_GAP)) + (GameConfig.BOX_SIZE / 2);
+        int spawnY = ARENA_Y + (ARENA_H / 2);
+        long nowMs = System.currentTimeMillis();
 
         BackgroundRipple ripple = new BackgroundRipple();
         ripple.x = spawnX;
@@ -1193,40 +1171,38 @@ public class GamePanel extends JPanel implements ActionListener {
         ripple.startMs = nowMs;
         ripple.durationMs = 760L + random.nextInt(501);
         backgroundRipples.add(ripple);
-        lastRippleSpawnMs = nowMs;
 
         if (backgroundRipples.size() > RIPPLE_MAX_COUNT) {
             backgroundRipples.remove(0);
         }
     }
 
+    private int findRippleSequenceIndex(List<Integer> sequence, int progressIndex, int symbol) {
+        int size = sequence.size();
+        if (size == 0) {
+            return -1;
+        }
+        int clampedProgress = Math.max(0, Math.min(progressIndex, size - 1));
+
+        if (sequence.get(clampedProgress) == symbol) {
+            return clampedProgress;
+        }
+        for (int i = clampedProgress + 1; i < size; i++) {
+            if (sequence.get(i) == symbol) {
+                return i;
+            }
+        }
+        for (int i = clampedProgress - 1; i >= 0; i--) {
+            if (sequence.get(i) == symbol) {
+                return i;
+            }
+        }
+        return clampedProgress;
+    }
+
     private void updateBackgroundRipples() {
         long nowMs = System.currentTimeMillis();
         backgroundRipples.removeIf(ripple -> nowMs - ripple.startMs > ripple.durationMs);
-    }
-
-    private boolean isRipplePositionSpaced(int x, int y, long nowMs, int minGap) {
-        int minGapSquared = minGap * minGap;
-        for (BackgroundRipple ripple : backgroundRipples) {
-            long elapsed = nowMs - ripple.startMs;
-            if (elapsed > ripple.durationMs) {
-                continue;
-            }
-            int dx = x - ripple.x;
-            int dy = y - ripple.y;
-            if ((dx * dx) + (dy * dy) < minGapSquared) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private int snapToGrid(int value, int spacing) {
-        return Math.round(value / (float) spacing) * spacing;
-    }
-
-    private int clampInt(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
     }
 
     private void drawGlowingCenteredString(
