@@ -604,6 +604,7 @@ public class GamePanel extends JPanel implements ActionListener {
             }
         } else if (playerRect.intersects(getDoorRect())) {
             roomNumber++;
+            AudioManager.playSfx("next_room.wav");
             generateRoom();
         }
     }
