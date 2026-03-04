@@ -25,23 +25,33 @@ public class RoundManager {
         startNewRound();
     }
 
-    public void handleSymbolInput(int input) {
+    public RoundCompletion handleSymbolInput(int input) {
         long now = System.currentTimeMillis();
         if (now < wrongFlashUntilMs || sequence.isEmpty()) {
-            return;
+            return null;
         }
 
         if (sequence.get(progressIndex) == input) {
             progressIndex++;
             if (progressIndex == sequence.size()) {
+                long elapsedMs = Math.max(0L, now - roundStartTimeMs);
+                long timeLeftMs = Math.max(0L, roundDurationMs - elapsedMs);
+                RoundCompletion completion = new RoundCompletion(
+                        sequence.size(),
+                        roundDurationMs,
+                        elapsedMs,
+                        timeLeftMs
+                );
                 roundsCleared++;
                 startNewRound();
+                return completion;
             }
-            return;
+            return null;
         }
 
         wrongFlashUntilMs = now + GameConfig.WRONG_FLASH_MS;
         progressIndex = 0;
+        return null;
     }
 
     public List<Integer> getSequence() {

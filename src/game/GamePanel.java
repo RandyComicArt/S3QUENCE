@@ -1,8 +1,13 @@
 package game;
 
+import game.audio.AudioManager;
 import game.config.GameConfig;
+import game.logic.DamageCalculator;
+import game.logic.RoundCompletion;
 import game.logic.RoundManager;
 import game.model.Direction;
+import game.model.EncounterEnemy;
+import game.model.EncounterNode;
 import game.model.ScreenState;
 
 import javax.imageio.ImageIO;
@@ -68,6 +73,10 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int ARENA_Y = 220;
     private static final int ARENA_W = GameConfig.WIDTH - 240;
     private static final int ARENA_H = 420;
+    private static final int ENEMY_BAR_X = ARENA_X + 150;
+    private static final int ENEMY_BAR_Y = ARENA_Y + 54;
+    private static final int ENEMY_BAR_W = ARENA_W - 300;
+    private static final int ENEMY_BAR_H = 22;
 
     private static final int ROOM_X = ARENA_X + 35;
     private static final int ROOM_Y = ARENA_Y + 40;
@@ -106,12 +115,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private boolean moveLeftHeld;
     private boolean moveRightHeld;
     private long lastTickNanos = System.nanoTime();
-
-    private static class EncounterNode {
-        int x;
-        int y;
-        boolean cleared;
-    }
+    private int lastHitDamage;
+    private long lastHitUntilMs;
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -283,13 +288,13 @@ public class GamePanel extends JPanel implements ActionListener {
         drawCenteredString(g2d, "DUNGEON ROOM " + roomNumber, GameConfig.WIDTH / 2, ARENA_Y + 28);
 
         for (EncounterNode node : roomEncounters) {
-            if (node.cleared) {
+            if (node.isCleared()) {
                 continue;
             }
             g2d.setColor(RED);
-            g2d.fillRect(node.x, node.y, ENCOUNTER_SIZE, ENCOUNTER_SIZE);
+            g2d.fillRect(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
             g2d.setColor(WHITE);
-            g2d.drawRect(node.x, node.y, ENCOUNTER_SIZE, ENCOUNTER_SIZE);
+            g2d.drawRect(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
         }
 
         Rectangle door = getDoorRect();
@@ -312,6 +317,47 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setColor(WHITE);
         g2d.setFont(SMALL_FONT);
         drawGlowingCenteredString(g2d, "ENCOUNTER", GameConfig.WIDTH / 2, ARENA_Y + 34, WHITE, GLOW_CYAN);
+        drawEncounterEnemyBar(g2d);
+    }
+
+    private void drawEncounterEnemyBar(Graphics2D g2d) {
+        EncounterEnemy enemy = getActiveEncounterEnemy();
+        if (enemy == null) {
+            return;
+        }
+
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        drawCenteredString(g2d, "TARGET", GameConfig.WIDTH / 2, ENEMY_BAR_Y - 8);
+
+        g2d.setColor(new Color(2, 12, 32));
+        g2d.fillRect(ENEMY_BAR_X, ENEMY_BAR_Y, ENEMY_BAR_W, ENEMY_BAR_H);
+        g2d.setColor(new Color(GLOW_CYAN.getRed(), GLOW_CYAN.getGreen(), GLOW_CYAN.getBlue(), 110));
+        g2d.drawRect(ENEMY_BAR_X - 1, ENEMY_BAR_Y - 1, ENEMY_BAR_W + 1, ENEMY_BAR_H + 1);
+        g2d.setColor(WHITE);
+        g2d.drawRect(ENEMY_BAR_X, ENEMY_BAR_Y, ENEMY_BAR_W, ENEMY_BAR_H);
+
+        double ratio = Math.max(0.0, Math.min(1.0, enemy.getHealthRatio()));
+        int fillWidth = (int) Math.round((ENEMY_BAR_W - 4) * ratio);
+        if (fillWidth > 0) {
+            Color hpColor = lerpColor(RED, GREEN, ratio);
+            g2d.setColor(hpColor);
+            g2d.fillRect(ENEMY_BAR_X + 2, ENEMY_BAR_Y + 2, fillWidth, ENEMY_BAR_H - 3);
+        }
+
+        g2d.setColor(WHITE);
+        String hpText = enemy.getHealth() + " / " + enemy.getMaxHealth();
+        drawCenteredString(g2d, hpText, GameConfig.WIDTH / 2, ENEMY_BAR_Y + ENEMY_BAR_H + 18);
+
+        long now = System.currentTimeMillis();
+        if (now < lastHitUntilMs && lastHitDamage > 0) {
+            double popProgress = 1.0 - ((lastHitUntilMs - now) / 650.0);
+            int yOffset = (int) Math.round(14 * popProgress);
+            int alpha = (int) Math.round(255 * (1.0 - popProgress));
+            alpha = Math.max(0, Math.min(255, alpha));
+            g2d.setColor(new Color(255, 122, 200, alpha));
+            drawCenteredString(g2d, "-" + lastHitDamage, GameConfig.WIDTH / 2, ENEMY_BAR_Y - 18 - yOffset);
+        }
     }
 
     private void drawSequence(Graphics2D g2d) {
@@ -460,6 +506,8 @@ public class GamePanel extends JPanel implements ActionListener {
         pendingEncounterIndex = -1;
         encounterTransitionActive = false;
         encounterIntroActive = false;
+        lastHitDamage = 0;
+        lastHitUntilMs = 0;
 
         playerX = ROOM_X + 26;
         playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
@@ -467,7 +515,7 @@ public class GamePanel extends JPanel implements ActionListener {
         int encounters = 1 + random.nextInt(3);
         int maxTries = 50;
         for (int i = 0; i < encounters; i++) {
-            EncounterNode node = new EncounterNode();
+            EncounterNode node = new EncounterNode(generateEnemyHealthForRoom());
             boolean placed = false;
             for (int tries = 0; tries < maxTries; tries++) {
                 int nx = ROOM_X + 80 + random.nextInt(Math.max(1, ROOM_W - 220));
@@ -482,8 +530,8 @@ public class GamePanel extends JPanel implements ActionListener {
                 if (intersectsAnyEncounter(candidate)) {
                     continue;
                 }
-                node.x = nx;
-                node.y = ny;
+                node.setX(nx);
+                node.setY(ny);
                 placed = true;
                 break;
             }
@@ -493,11 +541,17 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         if (roomEncounters.isEmpty()) {
-            EncounterNode fallback = new EncounterNode();
-            fallback.x = ROOM_X + ROOM_W / 2;
-            fallback.y = ROOM_Y + ROOM_H / 2;
+            EncounterNode fallback = new EncounterNode(generateEnemyHealthForRoom());
+            fallback.setX(ROOM_X + ROOM_W / 2);
+            fallback.setY(ROOM_Y + ROOM_H / 2);
             roomEncounters.add(fallback);
         }
+    }
+
+    private int generateEnemyHealthForRoom() {
+        int base = GameConfig.ENEMY_BASE_HEALTH + ((roomNumber - 1) * GameConfig.ENEMY_HEALTH_PER_ROOM);
+        int variance = random.nextInt((GameConfig.ENEMY_HEALTH_VARIANCE * 2) + 1) - GameConfig.ENEMY_HEALTH_VARIANCE;
+        return Math.max(40, base + variance);
     }
 
     private void updateDungeonMovement(double deltaSeconds) {
@@ -539,10 +593,10 @@ public class GamePanel extends JPanel implements ActionListener {
         if (!allEncountersCleared()) {
             for (int i = 0; i < roomEncounters.size(); i++) {
                 EncounterNode node = roomEncounters.get(i);
-                if (node.cleared) {
+                if (node.isCleared()) {
                     continue;
                 }
-                Rectangle encounterRect = new Rectangle(node.x, node.y, ENCOUNTER_SIZE, ENCOUNTER_SIZE);
+                Rectangle encounterRect = new Rectangle(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
                 if (playerRect.intersects(encounterRect)) {
                     startEncounter(i);
                     return;
@@ -556,18 +610,27 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void startEncounter(int encounterIndex) {
         clearMovementInput();
+        lastHitDamage = 0;
+        lastHitUntilMs = 0;
+        AudioManager.playSfx("encounter_start.wav");
         pendingEncounterIndex = encounterIndex;
         encounterTransitionActive = true;
         encounterTransitionStartMs = System.currentTimeMillis();
     }
 
     private void handleEncounterInput(int symbol) {
-        int before = roundManager.getRoundsCleared();
-        roundManager.handleSymbolInput(symbol);
-        if (roundManager.getRoundsCleared() > before) {
-            if (activeEncounterIndex >= 0 && activeEncounterIndex < roomEncounters.size()) {
-                roomEncounters.get(activeEncounterIndex).cleared = true;
-            }
+        RoundCompletion completion = roundManager.handleSymbolInput(symbol);
+        if (completion == null || activeEncounterIndex < 0 || activeEncounterIndex >= roomEncounters.size()) {
+            return;
+        }
+
+        EncounterNode currentNode = roomEncounters.get(activeEncounterIndex);
+        int damage = DamageCalculator.calculateDamage(completion);
+        currentNode.getEnemy().applyDamage(damage);
+        lastHitDamage = damage;
+        lastHitUntilMs = System.currentTimeMillis() + 650L;
+
+        if (currentNode.isCleared()) {
             activeEncounterIndex = -1;
             clearMovementInput();
             screen = ScreenState.DUNGEON;
@@ -577,7 +640,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private int countUnclearedEncounters() {
         int count = 0;
         for (EncounterNode node : roomEncounters) {
-            if (!node.cleared) {
+            if (!node.isCleared()) {
                 count++;
             }
         }
@@ -588,9 +651,16 @@ public class GamePanel extends JPanel implements ActionListener {
         return countUnclearedEncounters() == 0;
     }
 
+    private EncounterEnemy getActiveEncounterEnemy() {
+        if (activeEncounterIndex < 0 || activeEncounterIndex >= roomEncounters.size()) {
+            return null;
+        }
+        return roomEncounters.get(activeEncounterIndex).getEnemy();
+    }
+
     private boolean intersectsAnyEncounter(Rectangle candidate) {
         for (EncounterNode node : roomEncounters) {
-            Rectangle rect = new Rectangle(node.x, node.y, ENCOUNTER_SIZE, ENCOUNTER_SIZE);
+            Rectangle rect = new Rectangle(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
             if (candidate.intersects(rect)) {
                 return true;
             }

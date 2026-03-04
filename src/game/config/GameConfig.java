@@ -14,6 +14,10 @@ public final class GameConfig {
     public static final int BOX_SIZE = 64;
     public static final int BOX_GAP = 12;
 
+    public static final int ENEMY_BASE_HEALTH = 95;
+    public static final int ENEMY_HEALTH_PER_ROOM = 8;
+    public static final int ENEMY_HEALTH_VARIANCE = 25;
+
     private GameConfig() {
     }
 }
