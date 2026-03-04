@@ -1,5 +1,6 @@
 package game.audio;
 
+import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
@@ -14,6 +15,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public final class AudioManager {
     private static Clip musicClip;
+    private static String currentMusicFile;
     private static final float DEFAULT_MUSIC_GAIN_DB = -5.0f;
     private static final float DEFAULT_SFX_GAIN_DB = -3.0f;
     private static final float CLICK_GAIN_JITTER_DB = 2.0f;
@@ -24,9 +26,23 @@ public final class AudioManager {
     }
 
     public static synchronized void startBackgroundLoop(String fileName) {
-        if (musicClip != null && musicClip.isOpen()) {
+        ensureBackgroundLoop(fileName);
+    }
+
+    public static synchronized void ensureBackgroundLoop(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
             return;
         }
+
+        if (musicClip != null && musicClip.isOpen() && fileName.equals(currentMusicFile)) {
+            if (!musicClip.isRunning()) {
+                musicClip.loop(Clip.LOOP_CONTINUOUSLY);
+                musicClip.start();
+            }
+            return;
+        }
+
+        stopBackgroundLoop();
 
         URL url = findAudioUrl(fileName);
         if (url == null) {
@@ -34,17 +50,28 @@ public final class AudioManager {
             return;
         }
 
-        try (AudioInputStream stream = AudioSystem.getAudioInputStream(url)) {
+        try (AudioInputStream stream = openPlayableStream(url)) {
             musicClip = AudioSystem.getClip();
             musicClip.open(stream);
             applyGain(musicClip, DEFAULT_MUSIC_GAIN_DB);
             musicClip.loop(Clip.LOOP_CONTINUOUSLY);
             musicClip.start();
+            currentMusicFile = fileName;
         } catch (UnsupportedAudioFileException | IOException | LineUnavailableException e) {
             musicClip = null;
+            currentMusicFile = null;
             System.err.println("Failed to start background loop: " + fileName);
             e.printStackTrace();
         }
+    }
+
+    public static synchronized void stopBackgroundLoop() {
+        if (musicClip != null) {
+            musicClip.stop();
+            musicClip.close();
+            musicClip = null;
+        }
+        currentMusicFile = null;
     }
 
     public static void playSfx(String fileName) {
@@ -72,7 +99,7 @@ public final class AudioManager {
         if (url == null) {
             return;
         }
-        try (AudioInputStream stream = AudioSystem.getAudioInputStream(url)) {
+        try (AudioInputStream stream = openPlayableStream(url)) {
             Clip clip = AudioSystem.getClip();
             clip.open(stream);
             float randomGain = baseGainDb;
@@ -91,6 +118,26 @@ public final class AudioManager {
         } catch (UnsupportedAudioFileException | IOException | LineUnavailableException ignored) {
             // Keep gameplay resilient if a sound fails.
         }
+    }
+
+    private static AudioInputStream openPlayableStream(URL url) throws UnsupportedAudioFileException, IOException {
+        AudioInputStream sourceStream = AudioSystem.getAudioInputStream(url);
+        AudioFormat source = sourceStream.getFormat();
+
+        AudioFormat target = new AudioFormat(
+                AudioFormat.Encoding.PCM_SIGNED,
+                source.getSampleRate(),
+                16,
+                source.getChannels(),
+                source.getChannels() * 2,
+                source.getSampleRate(),
+                false
+        );
+
+        if (AudioSystem.isConversionSupported(target, source)) {
+            return AudioSystem.getAudioInputStream(target, sourceStream);
+        }
+        return sourceStream;
     }
 
     private static float randomSignedFloat(float range) {

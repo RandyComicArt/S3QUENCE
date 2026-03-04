@@ -4,6 +4,7 @@ import game.audio.AudioManager;
 import game.config.GameConfig;
 import game.logic.RoundCompletion;
 import game.logic.RoundManager;
+import game.model.CoinPickup;
 import game.model.Direction;
 import game.model.EncounterEnemy;
 import game.model.EncounterNode;
@@ -58,6 +59,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final Color TIMER_LOW = new Color(74, 106, 255);
     private static final Color ARENA_GLASS = new Color(2, 10, 24, 102);
     private static final Color ROOM_GLASS = new Color(4, 18, 40, 90);
+    private static final String MENU_MUSIC_FILE = "main_menu.wav";
+    private static final String GAMEPLAY_MUSIC_FILE = "Loop_drum.wav";
 
     private static final Font TITLE_FONT = new Font("Monospaced", Font.BOLD, 40);
     private static final Font HUD_FONT = new Font("Monospaced", Font.BOLD, 24);
@@ -86,14 +89,20 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int DOOR_W = 16;
     private static final int DOOR_H = 88;
     private static final int PLAYER_SIZE = 18;
+    private static final int COIN_SIZE = 12;
     private static final double PLAYER_SPEED_PER_SECOND = 280.0;
     private static final int ENCOUNTER_SIZE = 18;
     private static final long ENCOUNTER_TRANSITION_MS = 720L;
     private static final long ENCOUNTER_TRANSITION_HOLD_MS = 180L;
     private static final long ENCOUNTER_INTRO_MS = 360L;
+    private static final long RUN_START_FADE_IN_MS = 1000L;
+    private static final long MENU_TRANSITION_MS = 520L;
+    private static final long MENU_TRANSITION_SWITCH_MS = MENU_TRANSITION_MS / 2;
     private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
     private static final int BACKDROP_GRID_SPACING = 52;
     private static final int RIPPLE_MAX_COUNT = 16;
+    private static final int KILL_EFFECT_MAX_COUNT = 10;
+    private static final long ENEMY_KILL_EFFECT_MS = 760L;
 
     private final Timer timer;
     private final RoundManager roundManager = new RoundManager();
@@ -102,7 +111,9 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private final Random random = new Random();
     private final List<EncounterNode> roomEncounters = new ArrayList<>();
+    private final List<CoinPickup> roomCoins = new ArrayList<>();
     private final List<BackgroundRipple> backgroundRipples = new ArrayList<>();
+    private final List<EnemyKillEffect> enemyKillEffects = new ArrayList<>();
 
     private ScreenState screen = ScreenState.MENU;
     private int roomNumber = 1;
@@ -121,6 +132,12 @@ public class GamePanel extends JPanel implements ActionListener {
     private long lastTickNanos = System.nanoTime();
     private int lastHitDamage;
     private long lastHitUntilMs;
+    private boolean runStartFadeInActive;
+    private long runStartFadeInStartMs;
+    private boolean menuTransitionActive;
+    private long menuTransitionStartMs;
+    private int coinCount;
+    private String activeMusicFile;
 
     private static class BackgroundRipple {
         int x;
@@ -134,6 +151,11 @@ public class GamePanel extends JPanel implements ActionListener {
         long durationMs;
     }
 
+    private static class EnemyKillEffect {
+        long startMs;
+        long durationMs;
+    }
+
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
         setBackground(BG);
@@ -141,6 +163,7 @@ public class GamePanel extends JPanel implements ActionListener {
         loadArrowSprites();
         setupMovementDispatcher();
         setupKeyBindings();
+        updateBackgroundMusic();
         timer = new Timer(16, this); // ~60 FPS
         timer.start();
     }
@@ -183,6 +206,9 @@ public class GamePanel extends JPanel implements ActionListener {
 
         if (screen == ScreenState.MENU) {
             drawMenu(gameG);
+            if (menuTransitionActive) {
+                drawMenuTransitionOverlay(gameG);
+            }
             gameG.dispose();
             g2d.dispose();
             return;
@@ -205,6 +231,12 @@ public class GamePanel extends JPanel implements ActionListener {
         } else if (encounterIntroActive) {
             drawEncounterIntro(gameG);
         }
+        if (runStartFadeInActive) {
+            drawRunStartFadeIn(gameG);
+        }
+        if (menuTransitionActive) {
+            drawMenuTransitionOverlay(gameG);
+        }
 
         gameG.dispose();
         g2d.dispose();
@@ -219,32 +251,46 @@ public class GamePanel extends JPanel implements ActionListener {
         // Prevent giant movement jumps after focus loss or window stalls.
         deltaSeconds = Math.min(deltaSeconds, 0.05);
 
-        if (screen == ScreenState.DUNGEON && !encounterTransitionActive) {
-            updateDungeonMovement(deltaSeconds);
-        }
-        if (encounterTransitionActive) {
-            long elapsedMs = System.currentTimeMillis() - encounterTransitionStartMs;
-            if (elapsedMs >= ENCOUNTER_TRANSITION_MS + ENCOUNTER_TRANSITION_HOLD_MS) {
-                encounterTransitionActive = false;
-                activeEncounterIndex = pendingEncounterIndex;
-                pendingEncounterIndex = -1;
-                roundManager.startGame(false);
-                screen = ScreenState.ENCOUNTER;
-                encounterIntroActive = true;
-                encounterIntroStartMs = System.currentTimeMillis();
+        if (menuTransitionActive) {
+            updateMenuTransition();
+        } else {
+            if (screen == ScreenState.DUNGEON && !encounterTransitionActive) {
+                updateDungeonMovement(deltaSeconds);
+                collectCoinsAtPlayer();
+            }
+            if (encounterTransitionActive) {
+                long elapsedMs = System.currentTimeMillis() - encounterTransitionStartMs;
+                if (elapsedMs >= ENCOUNTER_TRANSITION_MS + ENCOUNTER_TRANSITION_HOLD_MS) {
+                    encounterTransitionActive = false;
+                    activeEncounterIndex = pendingEncounterIndex;
+                    pendingEncounterIndex = -1;
+                    roundManager.startGame(false);
+                    screen = ScreenState.ENCOUNTER;
+                    encounterIntroActive = true;
+                    encounterIntroStartMs = System.currentTimeMillis();
+                }
+            }
+            if (encounterIntroActive) {
+                long introElapsedMs = System.currentTimeMillis() - encounterIntroStartMs;
+                if (introElapsedMs >= ENCOUNTER_INTRO_MS) {
+                    encounterIntroActive = false;
+                }
+            }
+            if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && roundManager.hasTimedOut()) {
+                clearMovementInput();
+                AudioManager.playSfx("player_death.wav");
+                screen = ScreenState.LOST;
             }
         }
-        if (encounterIntroActive) {
-            long introElapsedMs = System.currentTimeMillis() - encounterIntroStartMs;
-            if (introElapsedMs >= ENCOUNTER_INTRO_MS) {
-                encounterIntroActive = false;
+        if (runStartFadeInActive) {
+            long fadeElapsedMs = System.currentTimeMillis() - runStartFadeInStartMs;
+            if (fadeElapsedMs >= RUN_START_FADE_IN_MS) {
+                runStartFadeInActive = false;
             }
         }
-        if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && roundManager.hasTimedOut()) {
-            clearMovementInput();
-            screen = ScreenState.LOST;
-        }
+        updateBackgroundMusic();
         updateBackgroundRipples();
+        updateEnemyKillEffects();
         repaint();
     }
 
@@ -282,6 +328,9 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setColor(WHITE);
         g2d.setFont(BODY_FONT);
         drawCenteredString(g2d, "ENEMIES REMAINING: " + left, GameConfig.WIDTH / 2, HUD_Y + 62);
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(YELLOW);
+        drawCenteredString(g2d, "COINS: " + coinCount, GameConfig.WIDTH / 2, HUD_Y + 98);
     }
 
     private void drawEncounterHud(Graphics2D g2d) {
@@ -313,6 +362,8 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.setColor(WHITE);
             g2d.drawRect(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
         }
+        drawCoins(g2d);
+        drawEnemyKillEffects(g2d);
 
         Rectangle door = getDoorRect();
         if (allEncountersCleared()) {
@@ -325,6 +376,33 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.drawRect(door.x, door.y, door.width, door.height);
 
         drawSoul(g2d, (int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, YELLOW);
+    }
+
+    private void drawEnemyKillEffects(Graphics2D g2d) {
+        if (enemyKillEffects.isEmpty()) {
+            return;
+        }
+
+        long nowMs = System.currentTimeMillis();
+        int strongestFlashAlpha = 0;
+
+        for (EnemyKillEffect effect : enemyKillEffects) {
+            long elapsedMs = nowMs - effect.startMs;
+            if (elapsedMs < 0 || elapsedMs > effect.durationMs) {
+                continue;
+            }
+
+            double progress = elapsedMs / (double) effect.durationMs;
+            double life = 1.0 - progress;
+
+            int flashAlpha = clampInt((int) Math.round(95 * life * life), 0, 255);
+            strongestFlashAlpha = Math.max(strongestFlashAlpha, flashAlpha);
+        }
+
+        if (strongestFlashAlpha > 0) {
+            g2d.setColor(new Color(120, 226, 255, strongestFlashAlpha));
+            g2d.fillRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
+        }
     }
 
     private void drawArena(Graphics2D g2d) {
@@ -481,6 +559,9 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put("confirm_action", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                if (menuTransitionActive) {
+                    return;
+                }
                 if (screen == ScreenState.MENU) {
                     startRun();
                 } else if (screen == ScreenState.LOST) {
@@ -493,11 +574,9 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put("go_to_menu", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                clearMovementInput();
-                encounterTransitionActive = false;
-                pendingEncounterIndex = -1;
-                encounterIntroActive = false;
-                screen = ScreenState.MENU;
+                if (screen != ScreenState.MENU && !menuTransitionActive) {
+                    startMenuTransition();
+                }
             }
         });
     }
@@ -511,7 +590,7 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put(actionName, new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if (screen == ScreenState.ENCOUNTER && !encounterIntroActive) {
+                if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive) {
                     AudioManager.playClickSfx();
                     spawnInputRipple(direction.ordinal());
                     handleEncounterInput(direction.ordinal());
@@ -526,7 +605,7 @@ public class GamePanel extends JPanel implements ActionListener {
             public boolean dispatchKeyEvent(KeyEvent e) {
                 int id = e.getID();
                 if (id == KeyEvent.KEY_PRESSED) {
-                    if (screen == ScreenState.DUNGEON && !encounterTransitionActive) {
+                    if (screen == ScreenState.DUNGEON && !encounterTransitionActive && !menuTransitionActive) {
                         setMovementFromKeyCode(e.getKeyCode(), true);
                     }
                 } else if (id == KeyEvent.KEY_RELEASED) {
@@ -539,23 +618,32 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void startRun() {
         roomNumber = 1;
+        coinCount = 0;
         clearMovementInput();
+        menuTransitionActive = false;
         encounterTransitionActive = false;
         pendingEncounterIndex = -1;
         encounterIntroActive = false;
+        runStartFadeInActive = true;
+        runStartFadeInStartMs = System.currentTimeMillis();
+        enemyKillEffects.clear();
         roundManager.startGame(true);
         generateRoom();
+        AudioManager.playSfx("enter_game.wav");
         screen = ScreenState.DUNGEON;
     }
 
     private void generateRoom() {
         roomEncounters.clear();
+        roomCoins.clear();
         activeEncounterIndex = -1;
         pendingEncounterIndex = -1;
+        menuTransitionActive = false;
         encounterTransitionActive = false;
         encounterIntroActive = false;
         lastHitDamage = 0;
         lastHitUntilMs = 0;
+        enemyKillEffects.clear();
 
         playerX = ROOM_X + 26;
         playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
@@ -686,6 +774,8 @@ public class GamePanel extends JPanel implements ActionListener {
 
         boolean enemyDefeated = currentNode.isCleared();
         if (enemyDefeated) {
+            spawnEnemyDefeatEffect(currentNode);
+            spawnCoinsForDefeat(currentNode);
             AudioManager.playSfx("enemy_defeated.wav");
         } else {
             AudioManager.playSfx("sequence_done.wav");
@@ -695,6 +785,102 @@ public class GamePanel extends JPanel implements ActionListener {
             activeEncounterIndex = -1;
             clearMovementInput();
             screen = ScreenState.DUNGEON;
+        }
+    }
+
+    private void spawnEnemyDefeatEffect(EncounterNode node) {
+        int centerX = node.getX() + (ENCOUNTER_SIZE / 2);
+        int centerY = node.getY() + (ENCOUNTER_SIZE / 2);
+        long nowMs = System.currentTimeMillis();
+
+        EnemyKillEffect effect = new EnemyKillEffect();
+        effect.startMs = nowMs;
+        effect.durationMs = ENEMY_KILL_EFFECT_MS + random.nextInt(181);
+        enemyKillEffects.add(effect);
+        if (enemyKillEffects.size() > KILL_EFFECT_MAX_COUNT) {
+            enemyKillEffects.remove(0);
+        }
+
+        spawnBackdropRippleAt(
+                centerX + random.nextInt(17) - 8,
+                centerY + random.nextInt(17) - 8,
+                430,
+                250,
+                42,
+                38,
+                24.0,
+                13.0,
+                18.0,
+                14.0,
+                980L,
+                430
+        );
+        spawnBackdropRippleAt(
+                centerX + random.nextInt(15) - 7,
+                centerY + random.nextInt(15) - 7,
+                330,
+                220,
+                38,
+                34,
+                20.0,
+                11.0,
+                16.0,
+                15.0,
+                860L,
+                380
+        );
+    }
+
+    private void spawnCoinsForDefeat(EncounterNode node) {
+        int centerX = node.getX() + (ENCOUNTER_SIZE / 2);
+        int centerY = node.getY() + (ENCOUNTER_SIZE / 2);
+        int drops = 2 + random.nextInt(4);
+
+        for (int i = 0; i < drops; i++) {
+            int dropX = centerX + (random.nextInt(31) - 15) - (COIN_SIZE / 2);
+            int dropY = centerY + (random.nextInt(31) - 15) - (COIN_SIZE / 2);
+            int clampedX = clampInt(dropX, ROOM_X + 4, ROOM_X + ROOM_W - COIN_SIZE - 4);
+            int clampedY = clampInt(dropY, ROOM_Y + 4, ROOM_Y + ROOM_H - COIN_SIZE - 4);
+            roomCoins.add(new CoinPickup(clampedX, clampedY, 1));
+        }
+    }
+
+    private void collectCoinsAtPlayer() {
+        if (roomCoins.isEmpty()) {
+            return;
+        }
+
+        Rectangle playerRect = new Rectangle(
+                (int) Math.round(playerX),
+                (int) Math.round(playerY),
+                PLAYER_SIZE,
+                PLAYER_SIZE
+        );
+        int collectedValue = 0;
+        for (int i = roomCoins.size() - 1; i >= 0; i--) {
+            CoinPickup coin = roomCoins.get(i);
+            Rectangle coinRect = new Rectangle(coin.getX(), coin.getY(), COIN_SIZE, COIN_SIZE);
+            if (!playerRect.intersects(coinRect)) {
+                continue;
+            }
+            collectedValue += coin.getValue();
+            roomCoins.remove(i);
+        }
+
+        if (collectedValue > 0) {
+            coinCount += collectedValue;
+            AudioManager.playSfx("coin_collect.wav");
+        }
+    }
+
+    private void drawCoins(Graphics2D g2d) {
+        for (CoinPickup coin : roomCoins) {
+            int x = coin.getX();
+            int y = coin.getY();
+            g2d.setColor(new Color(255, 192, 66));
+            g2d.fillOval(x, y, COIN_SIZE, COIN_SIZE);
+            g2d.setColor(WHITE);
+            g2d.drawOval(x, y, COIN_SIZE, COIN_SIZE);
         }
     }
 
@@ -1030,6 +1216,58 @@ public class GamePanel extends JPanel implements ActionListener {
         );
     }
 
+    private void drawRunStartFadeIn(Graphics2D g2d) {
+        double progress = (System.currentTimeMillis() - runStartFadeInStartMs) / (double) RUN_START_FADE_IN_MS;
+        progress = Math.max(0.0, Math.min(1.0, progress));
+        int alpha = clampInt((int) Math.round(255 * (1.0 - progress)), 0, 255);
+        if (alpha <= 0) {
+            return;
+        }
+        g2d.setColor(new Color(0, 0, 0, alpha));
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+    }
+
+    private void drawMenuTransitionOverlay(Graphics2D g2d) {
+        double progress = (System.currentTimeMillis() - menuTransitionStartMs) / (double) MENU_TRANSITION_MS;
+        progress = Math.max(0.0, Math.min(1.0, progress));
+        double alphaProgress = progress < 0.5 ? (progress / 0.5) : ((1.0 - progress) / 0.5);
+        int alpha = clampInt((int) Math.round(255 * Math.max(0.0, alphaProgress)), 0, 255);
+        if (alpha <= 0) {
+            return;
+        }
+        g2d.setColor(new Color(0, 0, 0, alpha));
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+    }
+
+    private void startMenuTransition() {
+        clearMovementInput();
+        encounterTransitionActive = false;
+        pendingEncounterIndex = -1;
+        encounterIntroActive = false;
+        runStartFadeInActive = false;
+        menuTransitionActive = true;
+        menuTransitionStartMs = System.currentTimeMillis();
+    }
+
+    private void updateMenuTransition() {
+        long elapsedMs = System.currentTimeMillis() - menuTransitionStartMs;
+        if (elapsedMs >= MENU_TRANSITION_SWITCH_MS && screen != ScreenState.MENU) {
+            screen = ScreenState.MENU;
+        }
+        if (elapsedMs >= MENU_TRANSITION_MS) {
+            menuTransitionActive = false;
+        }
+    }
+
+    private void updateBackgroundMusic() {
+        String targetFile = screen == ScreenState.MENU ? MENU_MUSIC_FILE : GAMEPLAY_MUSIC_FILE;
+        if (targetFile.equals(activeMusicFile)) {
+            return;
+        }
+        AudioManager.ensureBackgroundLoop(targetFile);
+        activeMusicFile = targetFile;
+    }
+
     private void drawCenteredString(Graphics2D g2d, String text, int centerX, int baselineY) {
         FontMetrics metrics = g2d.getFontMetrics();
         int x = centerX - (metrics.stringWidth(text) / 2);
@@ -1197,21 +1435,36 @@ public class GamePanel extends JPanel implements ActionListener {
         int startX = ARENA_X + (ARENA_W - totalWidth) / 2;
         int spawnX = startX + (sequenceIndex * (GameConfig.BOX_SIZE + GameConfig.BOX_GAP)) + (GameConfig.BOX_SIZE / 2);
         int spawnY = ARENA_Y + (ARENA_H / 2);
-        long nowMs = System.currentTimeMillis();
+        spawnBackdropRippleAt(spawnX, spawnY, 300, 211, 34, 43, 15.0, 12.0, 22.0, 20.0, 760L, 501);
+    }
 
+    private void spawnBackdropRippleAt(
+            int x,
+            int y,
+            int minRadius,
+            int radiusRange,
+            int minBandWidth,
+            int bandWidthRange,
+            double minStrength,
+            double strengthRange,
+            double minWavelength,
+            double wavelengthRange,
+            long minDurationMs,
+            int durationRangeMs
+    ) {
         BackgroundRipple ripple = new BackgroundRipple();
-        ripple.x = spawnX;
-        ripple.y = spawnY;
-        ripple.maxRadius = 300 + random.nextInt(211);
-        ripple.bandWidth = 34 + random.nextInt(43);
-        ripple.strength = 15.0 + (random.nextDouble() * 12.0);
-        ripple.wavelength = 22.0 + (random.nextDouble() * 20.0);
+        ripple.x = x;
+        ripple.y = y;
+        ripple.maxRadius = minRadius + random.nextInt(Math.max(1, radiusRange));
+        ripple.bandWidth = minBandWidth + random.nextInt(Math.max(1, bandWidthRange));
+        ripple.strength = minStrength + (random.nextDouble() * strengthRange);
+        ripple.wavelength = minWavelength + (random.nextDouble() * wavelengthRange);
         ripple.phase = random.nextDouble() * Math.PI * 2.0;
-        ripple.startMs = nowMs;
-        ripple.durationMs = 760L + random.nextInt(501);
+        ripple.startMs = System.currentTimeMillis();
+        ripple.durationMs = minDurationMs + random.nextInt(Math.max(1, durationRangeMs));
         backgroundRipples.add(ripple);
 
-        if (backgroundRipples.size() > RIPPLE_MAX_COUNT) {
+        while (backgroundRipples.size() > RIPPLE_MAX_COUNT) {
             backgroundRipples.remove(0);
         }
     }
@@ -1244,6 +1497,11 @@ public class GamePanel extends JPanel implements ActionListener {
         backgroundRipples.removeIf(ripple -> nowMs - ripple.startMs > ripple.durationMs);
     }
 
+    private void updateEnemyKillEffects() {
+        long nowMs = System.currentTimeMillis();
+        enemyKillEffects.removeIf(effect -> nowMs - effect.startMs > effect.durationMs);
+    }
+
     private void drawGlowingCenteredString(
             Graphics2D g2d,
             String text,
@@ -1270,5 +1528,9 @@ public class GamePanel extends JPanel implements ActionListener {
         int b = (int) Math.round(from.getBlue() + ((to.getBlue() - from.getBlue()) * clamped));
         int a = (int) Math.round(from.getAlpha() + ((to.getAlpha() - from.getAlpha()) * clamped));
         return new Color(r, g, b, a);
+    }
+
+    private int clampInt(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 }
