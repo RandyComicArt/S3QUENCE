@@ -57,6 +57,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final Color GLOW_CYAN = new Color(94, 245, 255);
     private static final Color TIMER_HIGH = new Color(98, 247, 255);
     private static final Color TIMER_LOW = new Color(74, 106, 255);
+    private static final Color ARENA_GLASS = new Color(2, 10, 24, 102);
+    private static final Color ROOM_GLASS = new Color(4, 18, 40, 90);
 
     private static final Font TITLE_FONT = new Font("Monospaced", Font.BOLD, 40);
     private static final Font HUD_FONT = new Font("Monospaced", Font.BOLD, 24);
@@ -91,6 +93,10 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final long ENCOUNTER_TRANSITION_HOLD_MS = 180L;
     private static final long ENCOUNTER_INTRO_MS = 360L;
     private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
+    private static final int BACKDROP_GRID_SPACING = 52;
+    private static final int RIPPLE_MAX_COUNT = 16;
+    private static final long RIPPLE_SPAWN_COOLDOWN_MS = 44L;
+    private static final int RIPPLE_MIN_GAP = 120;
 
     private final Timer timer;
     private final RoundManager roundManager = new RoundManager();
@@ -99,6 +105,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private final Random random = new Random();
     private final List<EncounterNode> roomEncounters = new ArrayList<>();
+    private final List<BackgroundRipple> backgroundRipples = new ArrayList<>();
 
     private ScreenState screen = ScreenState.MENU;
     private int roomNumber = 1;
@@ -117,6 +124,19 @@ public class GamePanel extends JPanel implements ActionListener {
     private long lastTickNanos = System.nanoTime();
     private int lastHitDamage;
     private long lastHitUntilMs;
+    private long lastRippleSpawnMs;
+
+    private static class BackgroundRipple {
+        int x;
+        int y;
+        int maxRadius;
+        int bandWidth;
+        double strength;
+        double wavelength;
+        double phase;
+        long startMs;
+        long durationMs;
+    }
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -228,6 +248,7 @@ public class GamePanel extends JPanel implements ActionListener {
             clearMovementInput();
             screen = ScreenState.LOST;
         }
+        updateBackgroundRipples();
         repaint();
     }
 
@@ -276,9 +297,9 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawDungeon(Graphics2D g2d) {
-        g2d.setColor(new Color(2, 10, 24));
+        g2d.setColor(ARENA_GLASS);
         g2d.fillRect(ARENA_X + 2, ARENA_Y + 2, ARENA_W - 3, ARENA_H - 3);
-        g2d.setColor(new Color(4, 18, 40));
+        g2d.setColor(ROOM_GLASS);
         g2d.fillRect(ROOM_X + 2, ROOM_Y + 2, ROOM_W - 3, ROOM_H - 3);
         drawFrame(g2d, ARENA_X, ARENA_Y, ARENA_W, ARENA_H, 4, WHITE);
         drawFrame(g2d, ROOM_X, ROOM_Y, ROOM_W, ROOM_H, 2, WHITE);
@@ -311,7 +332,7 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawArena(Graphics2D g2d) {
-        g2d.setColor(new Color(2, 10, 24));
+        g2d.setColor(ARENA_GLASS);
         g2d.fillRect(ARENA_X + 2, ARENA_Y + 2, ARENA_W - 3, ARENA_H - 3);
         drawFrame(g2d, ARENA_X, ARENA_Y, ARENA_W, ARENA_H, 4, WHITE);
         g2d.setColor(WHITE);
@@ -466,6 +487,7 @@ public class GamePanel extends JPanel implements ActionListener {
             @Override
             public void actionPerformed(ActionEvent e) {
                 if (screen == ScreenState.ENCOUNTER && !encounterIntroActive) {
+                    spawnInputRipple(direction);
                     handleEncounterInput(direction.ordinal());
                 }
             }
@@ -1013,19 +1035,198 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setPaint(gradient);
         g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
 
-        double t = System.currentTimeMillis() / 1000.0;
+        long nowMs = System.currentTimeMillis();
+        double t = nowMs / 1000.0;
+        drawFlowField(g2d, t);
         int pulseA = 36 + (int) Math.round(22 * ((Math.sin(t * 1.7) + 1.0) / 2.0));
         g2d.setColor(new Color(56, 176, 255, pulseA));
         g2d.fillOval(GameConfig.WIDTH - 300, -140, 430, 430);
         g2d.fillOval(-180, GameConfig.HEIGHT - 270, 410, 410);
 
-        g2d.setColor(new Color(63, 126, 205, 24));
-        for (int y = 0; y < GameConfig.HEIGHT; y += 52) {
-            g2d.drawLine(0, y, GameConfig.WIDTH, y);
+        drawWarpedGrid(g2d, nowMs);
+    }
+
+    private void drawFlowField(Graphics2D g2d, double t) {
+        for (int i = 0; i < 4; i++) {
+            int amplitude = 20 + (i * 8);
+            int yBase = 140 + (i * 120);
+            int alpha = 24 - (i * 4);
+            g2d.setColor(new Color(80, 190, 255, Math.max(8, alpha)));
+            int previousX = 0;
+            int previousY = yBase + (int) Math.round(Math.sin((t * 1.2) + (i * 0.7)) * amplitude);
+            for (int x = 24; x <= GameConfig.WIDTH; x += 24) {
+                double wave = Math.sin((x * 0.012) + (t * (1.3 + (i * 0.18))) + (i * 0.5));
+                int y = yBase + (int) Math.round(wave * amplitude);
+                g2d.drawLine(previousX, previousY, x, y);
+                previousX = x;
+                previousY = y;
+            }
         }
-        for (int x = 0; x < GameConfig.WIDTH; x += 52) {
-            g2d.drawLine(x, 0, x, GameConfig.HEIGHT);
+    }
+
+    private void drawWarpedGrid(Graphics2D g2d, long nowMs) {
+        g2d.setColor(new Color(63, 126, 205, 28));
+        double[] warp = new double[2];
+        int step = 10;
+
+        for (int y = 0; y <= GameConfig.HEIGHT; y += BACKDROP_GRID_SPACING) {
+            int prevX = 0;
+            calculateRippleWarp(0, y, nowMs, warp);
+            int prevY = (int) Math.round(y + warp[1]);
+            for (int x = step; x <= GameConfig.WIDTH; x += step) {
+                calculateRippleWarp(x, y, nowMs, warp);
+                int warpedX = (int) Math.round(x + warp[0]);
+                int warpedY = (int) Math.round(y + warp[1]);
+                g2d.drawLine(prevX, prevY, warpedX, warpedY);
+                prevX = warpedX;
+                prevY = warpedY;
+            }
         }
+
+        for (int x = 0; x <= GameConfig.WIDTH; x += BACKDROP_GRID_SPACING) {
+            int prevY = 0;
+            calculateRippleWarp(x, 0, nowMs, warp);
+            int prevX = (int) Math.round(x + warp[0]);
+            for (int y = step; y <= GameConfig.HEIGHT; y += step) {
+                calculateRippleWarp(x, y, nowMs, warp);
+                int warpedX = (int) Math.round(x + warp[0]);
+                int warpedY = (int) Math.round(y + warp[1]);
+                g2d.drawLine(prevX, prevY, warpedX, warpedY);
+                prevX = warpedX;
+                prevY = warpedY;
+            }
+        }
+    }
+
+    private void calculateRippleWarp(double x, double y, long nowMs, double[] outWarp) {
+        double warpX = 0.0;
+        double warpY = 0.0;
+
+        for (BackgroundRipple ripple : backgroundRipples) {
+            long elapsedMs = nowMs - ripple.startMs;
+            if (elapsedMs < 0 || elapsedMs > ripple.durationMs) {
+                continue;
+            }
+
+            double progress = elapsedMs / (double) ripple.durationMs;
+            double life = 1.0 - progress;
+            double dx = x - ripple.x;
+            double dy = y - ripple.y;
+            double distance = Math.sqrt((dx * dx) + (dy * dy));
+            if (distance < 0.0001) {
+                continue;
+            }
+
+            double radius = 14.0 + (ripple.maxRadius * progress);
+            double bandDistance = Math.abs(distance - radius);
+            if (bandDistance > ripple.bandWidth * 1.15) {
+                continue;
+            }
+
+            double bandFalloff = 1.0 - (bandDistance / (ripple.bandWidth * 1.15));
+            bandFalloff = Math.pow(Math.max(0.0, bandFalloff), 1.35);
+            double phase = (distance / ripple.wavelength) - (progress * 15.8) + ripple.phase;
+            double wave = Math.sin(phase);
+            double swirl = Math.cos((phase * 0.68) + 0.6);
+
+            double nx = dx / distance;
+            double ny = dy / distance;
+            double amplitude = ripple.strength * (0.34 + (0.66 * life)) * bandFalloff;
+            warpX += (nx * wave * amplitude) + (-ny * swirl * amplitude * 0.55);
+            warpY += (ny * wave * amplitude) + (nx * swirl * amplitude * 0.55);
+        }
+
+        double magnitude = Math.sqrt((warpX * warpX) + (warpY * warpY));
+        if (magnitude > 44.0) {
+            double scale = 44.0 / magnitude;
+            warpX *= scale;
+            warpY *= scale;
+        }
+
+        outWarp[0] = warpX;
+        outWarp[1] = warpY;
+    }
+
+    private void spawnInputRipple(Direction direction) {
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - lastRippleSpawnMs < RIPPLE_SPAWN_COOLDOWN_MS) {
+            return;
+        }
+
+        int centerX = GameConfig.WIDTH / 2;
+        int centerY = ARENA_Y + (ARENA_H / 2);
+        int offset = 188;
+
+        if (direction == Direction.UP) {
+            centerY -= offset;
+        } else if (direction == Direction.DOWN) {
+            centerY += offset;
+        } else if (direction == Direction.LEFT) {
+            centerX -= offset;
+        } else {
+            centerX += offset;
+        }
+
+        int spawnX = centerX;
+        int spawnY = centerY;
+        for (int attempt = 0; attempt < 7; attempt++) {
+            int spread = 110 + (attempt * 12);
+            int candidateX = centerX + (random.nextInt((spread * 2) + 1) - spread);
+            int candidateY = centerY + (random.nextInt((spread * 2) + 1) - spread);
+            candidateX = snapToGrid(clampInt(candidateX, 36, GameConfig.WIDTH - 36), BACKDROP_GRID_SPACING);
+            candidateY = snapToGrid(clampInt(candidateY, 36, GameConfig.HEIGHT - 36), BACKDROP_GRID_SPACING);
+            if (isRipplePositionSpaced(candidateX, candidateY, nowMs, RIPPLE_MIN_GAP) || attempt == 6) {
+                spawnX = candidateX;
+                spawnY = candidateY;
+                break;
+            }
+        }
+
+        BackgroundRipple ripple = new BackgroundRipple();
+        ripple.x = spawnX;
+        ripple.y = spawnY;
+        ripple.maxRadius = 300 + random.nextInt(211);
+        ripple.bandWidth = 34 + random.nextInt(43);
+        ripple.strength = 15.0 + (random.nextDouble() * 12.0);
+        ripple.wavelength = 22.0 + (random.nextDouble() * 20.0);
+        ripple.phase = random.nextDouble() * Math.PI * 2.0;
+        ripple.startMs = nowMs;
+        ripple.durationMs = 760L + random.nextInt(501);
+        backgroundRipples.add(ripple);
+        lastRippleSpawnMs = nowMs;
+
+        if (backgroundRipples.size() > RIPPLE_MAX_COUNT) {
+            backgroundRipples.remove(0);
+        }
+    }
+
+    private void updateBackgroundRipples() {
+        long nowMs = System.currentTimeMillis();
+        backgroundRipples.removeIf(ripple -> nowMs - ripple.startMs > ripple.durationMs);
+    }
+
+    private boolean isRipplePositionSpaced(int x, int y, long nowMs, int minGap) {
+        int minGapSquared = minGap * minGap;
+        for (BackgroundRipple ripple : backgroundRipples) {
+            long elapsed = nowMs - ripple.startMs;
+            if (elapsed > ripple.durationMs) {
+                continue;
+            }
+            int dx = x - ripple.x;
+            int dy = y - ripple.y;
+            if ((dx * dx) + (dy * dy) < minGapSquared) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private int snapToGrid(int value, int spacing) {
+        return Math.round(value / (float) spacing) * spacing;
+    }
+
+    private int clampInt(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private void drawGlowingCenteredString(
