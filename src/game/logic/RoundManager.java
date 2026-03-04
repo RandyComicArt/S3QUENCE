@@ -17,6 +17,11 @@ public class RoundManager {
     private long roundStartTimeMs;
     private long roundDurationMs;
     private long wrongFlashUntilMs;
+    private int pendingDamage;
+    private long lastCorrectInputTimeMs;
+    private boolean sequenceCompleteHoldActive;
+    private long sequenceCompleteHoldUntilMs;
+    private long heldTimeLeftMs;
 
     public void startGame(boolean resetScore) {
         if (resetScore) {
@@ -26,24 +31,41 @@ public class RoundManager {
     }
 
     public RoundCompletion handleSymbolInput(int input) {
+        updateSequenceCompleteHold();
         long now = System.currentTimeMillis();
-        if (now < wrongFlashUntilMs || sequence.isEmpty()) {
+        if (sequenceCompleteHoldActive || now < wrongFlashUntilMs || sequence.isEmpty()) {
             return null;
         }
 
         if (sequence.get(progressIndex) == input) {
+            long cadenceReferenceMs = lastCorrectInputTimeMs > 0L ? lastCorrectInputTimeMs : roundStartTimeMs;
+            long cadenceMs = Math.max(0L, now - cadenceReferenceMs);
+            int increment = DamageCalculator.calculatePotentialIncrement(sequence.size(), progressIndex, cadenceMs);
+            pendingDamage += increment;
+
+            lastCorrectInputTimeMs = now;
+
             progressIndex++;
             if (progressIndex == sequence.size()) {
                 long elapsedMs = Math.max(0L, now - roundStartTimeMs);
                 long timeLeftMs = Math.max(0L, roundDurationMs - elapsedMs);
+                int pendingBeforeResolve = pendingDamage;
+                heldTimeLeftMs = timeLeftMs;
+                sequenceCompleteHoldActive = true;
+                sequenceCompleteHoldUntilMs = now + GameConfig.SEQUENCE_COMPLETE_HOLD_MS;
                 RoundCompletion completion = new RoundCompletion(
                         sequence.size(),
                         roundDurationMs,
                         elapsedMs,
-                        timeLeftMs
+                        timeLeftMs,
+                        pendingBeforeResolve,
+                        pendingBeforeResolve
                 );
                 roundsCleared++;
-                startNewRound();
+                // Damage is resolved by the caller immediately; clear preview state
+                // while preserving this sequence for the brief completion hold.
+                pendingDamage = 0;
+                lastCorrectInputTimeMs = 0L;
                 return completion;
             }
             return null;
@@ -51,14 +73,17 @@ public class RoundManager {
 
         wrongFlashUntilMs = now + GameConfig.WRONG_FLASH_MS;
         progressIndex = 0;
+        resetComboState();
         return null;
     }
 
     public List<Integer> getSequence() {
+        updateSequenceCompleteHold();
         return Collections.unmodifiableList(sequence);
     }
 
     public int getProgressIndex() {
+        updateSequenceCompleteHold();
         return progressIndex;
     }
 
@@ -67,20 +92,35 @@ public class RoundManager {
     }
 
     public long getTimeLeftMs() {
+        updateSequenceCompleteHold();
+        if (sequenceCompleteHoldActive) {
+            return Math.max(1L, heldTimeLeftMs);
+        }
         long elapsed = System.currentTimeMillis() - roundStartTimeMs;
         return Math.max(0, roundDurationMs - elapsed);
     }
 
     public long getRoundDurationMs() {
+        updateSequenceCompleteHold();
         return roundDurationMs;
     }
 
     public boolean isWrongFlashActive() {
+        updateSequenceCompleteHold();
         return System.currentTimeMillis() < wrongFlashUntilMs;
     }
 
     public boolean hasTimedOut() {
+        updateSequenceCompleteHold();
+        if (sequenceCompleteHoldActive) {
+            return false;
+        }
         return getTimeLeftMs() <= 0;
+    }
+
+    public int getPendingDamage() {
+        updateSequenceCompleteHold();
+        return pendingDamage;
     }
 
     private void startNewRound() {
@@ -97,5 +137,24 @@ public class RoundManager {
         wrongFlashUntilMs = 0;
         roundStartTimeMs = System.currentTimeMillis();
         roundDurationMs = GameConfig.BASE_ROUND_TIME_MS + (sequenceLength * GameConfig.TIME_PER_SYMBOL_MS);
+        resetComboState();
+    }
+
+    private void resetComboState() {
+        pendingDamage = 0;
+        lastCorrectInputTimeMs = 0L;
+        sequenceCompleteHoldActive = false;
+        sequenceCompleteHoldUntilMs = 0L;
+        heldTimeLeftMs = 0L;
+    }
+
+    private void updateSequenceCompleteHold() {
+        if (!sequenceCompleteHoldActive) {
+            return;
+        }
+        if (System.currentTimeMillis() < sequenceCompleteHoldUntilMs) {
+            return;
+        }
+        startNewRound();
     }
 }

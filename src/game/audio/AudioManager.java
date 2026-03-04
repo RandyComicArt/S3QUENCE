@@ -10,11 +10,15 @@ import java.io.File;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class AudioManager {
     private static Clip musicClip;
     private static final float DEFAULT_MUSIC_GAIN_DB = -5.0f;
     private static final float DEFAULT_SFX_GAIN_DB = -3.0f;
+    private static final float CLICK_GAIN_JITTER_DB = 2.0f;
+    private static final double CLICK_RATE_JITTER = 0.055;
+    private static final float CLICK_PAN_JITTER = 0.28f;
 
     private AudioManager() {
     }
@@ -44,6 +48,26 @@ public final class AudioManager {
     }
 
     public static void playSfx(String fileName) {
+        playSfxModulated(fileName, DEFAULT_SFX_GAIN_DB, 0.0f, 0.0, 0.0f);
+    }
+
+    public static void playClickSfx() {
+        playSfxModulated(
+                "click.wav",
+                DEFAULT_SFX_GAIN_DB,
+                CLICK_GAIN_JITTER_DB,
+                CLICK_RATE_JITTER,
+                CLICK_PAN_JITTER
+        );
+    }
+
+    private static void playSfxModulated(
+            String fileName,
+            float baseGainDb,
+            float gainJitterDb,
+            double rateJitter,
+            float panJitter
+    ) {
         URL url = findAudioUrl(fileName);
         if (url == null) {
             return;
@@ -51,7 +75,13 @@ public final class AudioManager {
         try (AudioInputStream stream = AudioSystem.getAudioInputStream(url)) {
             Clip clip = AudioSystem.getClip();
             clip.open(stream);
-            applyGain(clip, DEFAULT_SFX_GAIN_DB);
+            float randomGain = baseGainDb;
+            if (gainJitterDb > 0.0f) {
+                randomGain += randomSignedFloat(gainJitterDb);
+            }
+            applyGain(clip, randomGain);
+            applyRateJitter(clip, rateJitter);
+            applyPan(clip, panJitter > 0.0f ? randomSignedFloat(panJitter) : 0.0f);
             clip.addLineListener(event -> {
                 if (event.getType() == javax.sound.sampled.LineEvent.Type.STOP) {
                     clip.close();
@@ -63,6 +93,10 @@ public final class AudioManager {
         }
     }
 
+    private static float randomSignedFloat(float range) {
+        return (float) ((ThreadLocalRandom.current().nextDouble() * 2.0 - 1.0) * range);
+    }
+
     private static void applyGain(Clip clip, float gainDb) {
         if (!clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
             return;
@@ -70,6 +104,26 @@ public final class AudioManager {
         FloatControl gainControl = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
         float clamped = Math.max(gainControl.getMinimum(), Math.min(gainControl.getMaximum(), gainDb));
         gainControl.setValue(clamped);
+    }
+
+    private static void applyRateJitter(Clip clip, double jitterRatio) {
+        if (jitterRatio <= 0.0 || !clip.isControlSupported(FloatControl.Type.SAMPLE_RATE)) {
+            return;
+        }
+        FloatControl rateControl = (FloatControl) clip.getControl(FloatControl.Type.SAMPLE_RATE);
+        double factor = 1.0 + ((ThreadLocalRandom.current().nextDouble() * 2.0 - 1.0) * jitterRatio);
+        float targetRate = (float) (rateControl.getValue() * factor);
+        float clampedRate = Math.max(rateControl.getMinimum(), Math.min(rateControl.getMaximum(), targetRate));
+        rateControl.setValue(clampedRate);
+    }
+
+    private static void applyPan(Clip clip, float panValue) {
+        if (!clip.isControlSupported(FloatControl.Type.PAN)) {
+            return;
+        }
+        FloatControl panControl = (FloatControl) clip.getControl(FloatControl.Type.PAN);
+        float clamped = Math.max(panControl.getMinimum(), Math.min(panControl.getMaximum(), panValue));
+        panControl.setValue(clamped);
     }
 
     private static URL findAudioUrl(String fileName) {

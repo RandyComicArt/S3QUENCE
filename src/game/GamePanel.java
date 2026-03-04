@@ -2,7 +2,6 @@ package game;
 
 import game.audio.AudioManager;
 import game.config.GameConfig;
-import game.logic.DamageCalculator;
 import game.logic.RoundCompletion;
 import game.logic.RoundManager;
 import game.model.Direction;
@@ -363,9 +362,38 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.fillRect(ENEMY_BAR_X + 2, ENEMY_BAR_Y + 2, fillWidth, ENEMY_BAR_H - 3);
         }
 
+        int pendingDamage = Math.max(0, roundManager.getPendingDamage());
+        int previewDamage = Math.min(enemy.getHealth(), pendingDamage);
+        if (previewDamage > 0 && fillWidth > 0) {
+            int previewHealth = Math.max(0, enemy.getHealth() - previewDamage);
+            int previewWidth = (int) Math.round((ENEMY_BAR_W - 4) * (previewHealth / (double) enemy.getMaxHealth()));
+            previewWidth = Math.max(0, Math.min(fillWidth, previewWidth));
+            int previewSegmentWidth = fillWidth - previewWidth;
+            if (previewSegmentWidth > 0) {
+                g2d.setColor(new Color(255, 128, 216, 185));
+                g2d.fillRect(
+                        ENEMY_BAR_X + 2 + previewWidth,
+                        ENEMY_BAR_Y + 2,
+                        previewSegmentWidth,
+                        ENEMY_BAR_H - 3
+                );
+                g2d.setColor(new Color(255, 192, 234, 220));
+                g2d.drawLine(
+                        ENEMY_BAR_X + 2 + previewWidth,
+                        ENEMY_BAR_Y + 2,
+                        ENEMY_BAR_X + 2 + previewWidth,
+                        ENEMY_BAR_Y + ENEMY_BAR_H - 2
+                );
+            }
+        }
+
         g2d.setColor(WHITE);
         String hpText = enemy.getHealth() + " / " + enemy.getMaxHealth();
         drawCenteredString(g2d, hpText, GameConfig.WIDTH / 2, ENEMY_BAR_Y + ENEMY_BAR_H + 18);
+        if (previewDamage > 0) {
+            g2d.setColor(new Color(255, 162, 228));
+            drawCenteredString(g2d, "POTENTIAL: -" + previewDamage, GameConfig.WIDTH / 2, ENEMY_BAR_Y + ENEMY_BAR_H + 36);
+        }
 
         long now = System.currentTimeMillis();
         if (now < lastHitUntilMs && lastHitDamage > 0) {
@@ -484,6 +512,7 @@ public class GamePanel extends JPanel implements ActionListener {
             @Override
             public void actionPerformed(ActionEvent e) {
                 if (screen == ScreenState.ENCOUNTER && !encounterIntroActive) {
+                    AudioManager.playClickSfx();
                     spawnInputRipple(direction.ordinal());
                     handleEncounterInput(direction.ordinal());
                 }
@@ -645,12 +674,24 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         EncounterNode currentNode = roomEncounters.get(activeEncounterIndex);
-        int damage = DamageCalculator.calculateDamage(completion);
+        int damage = Math.max(0, completion.getResolvedDamage());
         currentNode.getEnemy().applyDamage(damage);
-        lastHitDamage = damage;
-        lastHitUntilMs = System.currentTimeMillis() + 650L;
+        if (damage > 0) {
+            lastHitDamage = damage;
+            lastHitUntilMs = System.currentTimeMillis() + 650L;
+        } else {
+            lastHitDamage = 0;
+            lastHitUntilMs = 0;
+        }
 
-        if (currentNode.isCleared()) {
+        boolean enemyDefeated = currentNode.isCleared();
+        if (enemyDefeated) {
+            AudioManager.playSfx("enemy_defeated.wav");
+        } else {
+            AudioManager.playSfx("sequence_done.wav");
+        }
+
+        if (enemyDefeated) {
             activeEncounterIndex = -1;
             clearMovementInput();
             screen = ScreenState.DUNGEON;
@@ -1006,10 +1047,6 @@ public class GamePanel extends JPanel implements ActionListener {
     ) {
         g2d.setColor(Color.BLACK);
         g2d.fillRect(0, 0, panelWidth, panelHeight);
-        g2d.setColor(new Color(41, 152, 236, 90));
-        g2d.drawRect(renderX - 3, renderY - 3, renderWidth + 5, renderHeight + 5);
-        g2d.setColor(new Color(94, 245, 255, 140));
-        g2d.drawRect(renderX - 2, renderY - 2, renderWidth + 3, renderHeight + 3);
     }
 
     private void drawScanlines(Graphics2D g2d) {
@@ -1149,11 +1186,13 @@ public class GamePanel extends JPanel implements ActionListener {
         if (sequence.isEmpty()) {
             return;
         }
+
         int count = sequence.size();
         int sequenceIndex = findRippleSequenceIndex(sequence, roundManager.getProgressIndex(), symbol);
         if (sequenceIndex < 0) {
             return;
         }
+
         int totalWidth = (count * GameConfig.BOX_SIZE) + ((count - 1) * GameConfig.BOX_GAP);
         int startX = ARENA_X + (ARENA_W - totalWidth) / 2;
         int spawnX = startX + (sequenceIndex * (GameConfig.BOX_SIZE + GameConfig.BOX_GAP)) + (GameConfig.BOX_SIZE / 2);
@@ -1182,8 +1221,8 @@ public class GamePanel extends JPanel implements ActionListener {
         if (size == 0) {
             return -1;
         }
-        int clampedProgress = Math.max(0, Math.min(progressIndex, size - 1));
 
+        int clampedProgress = Math.max(0, Math.min(progressIndex, size - 1));
         if (sequence.get(clampedProgress) == symbol) {
             return clampedProgress;
         }

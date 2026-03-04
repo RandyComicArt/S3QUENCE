@@ -10,6 +10,7 @@ public final class GameConfig {
     public static final long BASE_ROUND_TIME_MS = 1800L;
     public static final long TIME_PER_SYMBOL_MS = 700L;
     public static final long WRONG_FLASH_MS = 300L;
+    public static final long SEQUENCE_COMPLETE_HOLD_MS = 220L;
 
     public static final int BOX_SIZE = 64;
     public static final int BOX_GAP = 12;
