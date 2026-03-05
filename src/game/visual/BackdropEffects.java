@@ -163,7 +163,7 @@ public class BackdropEffects {
         int xOffset = (int) Math.round((1.0 - progress) * overlayWidth);
         int x = -xOffset;
 
-        g2d.setColor(new Color(24, 128, 236, 35));
+        g2d.setColor(new Color(24, 128, 236, 20));
         g2d.fillRect(x, 0, overlayWidth, GameConfig.HEIGHT);
     }
 

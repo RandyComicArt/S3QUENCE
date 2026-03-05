@@ -44,6 +44,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Random;
 
+@SuppressWarnings({"serial", "this-escape"})
 public class GamePanel extends JPanel implements ActionListener {
     private static final Color BG = new Color(1, 5, 16);
     private static final Color WHITE = new Color(194, 236, 255);
@@ -65,19 +66,13 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final Font HUD_FONT = new Font("Monospaced", Font.BOLD, 24);
     private static final Font BODY_FONT = new Font("Monospaced", Font.PLAIN, 20);
     private static final Font SMALL_FONT = new Font("Monospaced", Font.PLAIN, 16);
-    private static final int HUD_X = 40;
-    private static final int HUD_Y = 30;
-    private static final int HUD_W = GameConfig.WIDTH - 80;
-    private static final int HUD_H = 150;
-    private static final int HUD_TIMER_W = 620;
-    private static final int HUD_TIMER_X = HUD_X + ((HUD_W - HUD_TIMER_W) / 2);
 
     private static final int ARENA_X = 120;
-    private static final int ARENA_Y = 220;
+    private static final int ARENA_Y = 170;
     private static final int ARENA_W = GameConfig.WIDTH - 240;
     private static final int ARENA_H = 420;
+    private static final int ENCOUNTER_ARENA_Y = 170;
     private static final int ENEMY_BAR_X = ARENA_X + 150;
-    private static final int ENEMY_BAR_Y = ARENA_Y + 54;
     private static final int ENEMY_BAR_W = ARENA_W - 300;
     private static final int ENEMY_BAR_H = 22;
 
@@ -201,7 +196,6 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         if (screen == ScreenState.DUNGEON) {
-            drawDungeonHud(gameG);
             drawDungeon(gameG);
         } else {
             drawArena(gameG);
@@ -354,28 +348,6 @@ public class GamePanel extends JPanel implements ActionListener {
         selectedTimerStyle = styles[nextIndex];
     }
 
-    private void drawDungeonHud(Graphics2D g2d) {
-        g2d.setColor(new Color(2, 14, 34, 220));
-        g2d.fillRect(HUD_X + 2, HUD_Y + 2, HUD_W - 3, HUD_H - 3);
-        drawFrame(g2d, HUD_X, HUD_Y, HUD_W, HUD_H, 3, WHITE);
-
-        int left = countUnclearedEncounters();
-        g2d.setColor(WHITE);
-        g2d.setFont(BODY_FONT);
-        drawCenteredString(g2d, "ENEMIES REMAINING: " + left, GameConfig.WIDTH / 2, HUD_Y + 62);
-        g2d.setFont(SMALL_FONT);
-        g2d.setColor(YELLOW);
-        drawCenteredString(g2d, "COINS: " + coinCount, GameConfig.WIDTH / 2, HUD_Y + 98);
-    }
-
-    private void drawEncounterHud(Graphics2D g2d) {
-        g2d.setColor(new Color(2, 14, 34, 220));
-        g2d.fillRect(HUD_X + 2, HUD_Y + 2, HUD_W - 3, HUD_H - 3);
-        drawFrame(g2d, HUD_X, HUD_Y, HUD_W, HUD_H, 3, WHITE);
-
-        drawTimerBar(g2d, HUD_TIMER_X, HUD_Y + 56, HUD_TIMER_W, 36);
-    }
-
     private void drawDungeon(Graphics2D g2d) {
         g2d.setColor(ARENA_GLASS);
         g2d.fillRect(ARENA_X + 2, ARENA_Y + 2, ARENA_W - 3, ARENA_H - 3);
@@ -417,41 +389,43 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawArena(Graphics2D g2d) {
+        int encounterArenaY = ENCOUNTER_ARENA_Y;
         g2d.setColor(ARENA_GLASS);
-        g2d.fillRect(ARENA_X + 2, ARENA_Y + 2, ARENA_W - 3, ARENA_H - 3);
-        drawFrame(g2d, ARENA_X, ARENA_Y, ARENA_W, ARENA_H, 4, WHITE);
+        g2d.fillRect(ARENA_X + 2, encounterArenaY + 2, ARENA_W - 3, ARENA_H - 3);
+        drawFrame(g2d, ARENA_X, encounterArenaY, ARENA_W, ARENA_H, 4, WHITE);
         if (selectedTimerStyle == TimerStyle.BORDER_RING) {
-            drawEncounterTimerBorder(g2d, ARENA_X, ARENA_Y, ARENA_W, ARENA_H);
+            drawEncounterTimerBorder(g2d, ARENA_X, encounterArenaY, ARENA_W, ARENA_H);
         }
         g2d.setColor(WHITE);
         g2d.setFont(SMALL_FONT);
-        drawGlowingCenteredString(g2d, "ENCOUNTER", GameConfig.WIDTH / 2, ARENA_Y + 34, WHITE, GLOW_CYAN);
-        drawEncounterEnemyBar(g2d);
+        drawGlowingCenteredString(g2d, "ENCOUNTER", GameConfig.WIDTH / 2, encounterArenaY + 34, WHITE, GLOW_CYAN);
+        drawEncounterEnemyBar(g2d, encounterArenaY);
     }
 
-    private void drawEncounterEnemyBar(Graphics2D g2d) {
+    private void drawEncounterEnemyBar(Graphics2D g2d, int encounterArenaY) {
         EncounterEnemy enemy = getActiveEncounterEnemy();
         if (enemy == null) {
             return;
         }
+        int enemyBarY = encounterArenaY + 54;
 
         g2d.setFont(SMALL_FONT);
         g2d.setColor(TEXT_DIM);
-        drawCenteredString(g2d, "TARGET", GameConfig.WIDTH / 2, ENEMY_BAR_Y - 8);
+        drawCenteredString(g2d, "TARGET", GameConfig.WIDTH / 2, enemyBarY - 8);
 
         g2d.setColor(new Color(2, 12, 32));
-        g2d.fillRect(ENEMY_BAR_X, ENEMY_BAR_Y, ENEMY_BAR_W, ENEMY_BAR_H);
+        g2d.fillRect(ENEMY_BAR_X, enemyBarY, ENEMY_BAR_W, ENEMY_BAR_H);
         g2d.setColor(new Color(GLOW_CYAN.getRed(), GLOW_CYAN.getGreen(), GLOW_CYAN.getBlue(), 110));
-        g2d.drawRect(ENEMY_BAR_X - 1, ENEMY_BAR_Y - 1, ENEMY_BAR_W + 1, ENEMY_BAR_H + 1);
+        g2d.drawRect(ENEMY_BAR_X - 1, enemyBarY - 1, ENEMY_BAR_W + 1, ENEMY_BAR_H + 1);
         g2d.setColor(WHITE);
-        g2d.drawRect(ENEMY_BAR_X, ENEMY_BAR_Y, ENEMY_BAR_W, ENEMY_BAR_H);
+        g2d.drawRect(ENEMY_BAR_X, enemyBarY, ENEMY_BAR_W, ENEMY_BAR_H);
 
         double ratio = Math.max(0.0, Math.min(1.0, enemy.getHealthRatio()));
         int fillWidth = (int) Math.round((ENEMY_BAR_W - 4) * ratio);
         if (fillWidth > 0) {
             Color hpColor = lerpColor(RED, GREEN, ratio);
             g2d.setColor(hpColor);
-            g2d.fillRect(ENEMY_BAR_X + 2, ENEMY_BAR_Y + 2, fillWidth, ENEMY_BAR_H - 3);
+            g2d.fillRect(ENEMY_BAR_X + 2, enemyBarY + 2, fillWidth, ENEMY_BAR_H - 3);
         }
 
         int pendingDamage = Math.max(0, roundManager.getPendingDamage());
@@ -465,26 +439,26 @@ public class GamePanel extends JPanel implements ActionListener {
                 g2d.setColor(new Color(255, 128, 216, 185));
                 g2d.fillRect(
                         ENEMY_BAR_X + 2 + previewWidth,
-                        ENEMY_BAR_Y + 2,
+                        enemyBarY + 2,
                         previewSegmentWidth,
                         ENEMY_BAR_H - 3
                 );
                 g2d.setColor(new Color(255, 192, 234, 220));
                 g2d.drawLine(
                         ENEMY_BAR_X + 2 + previewWidth,
-                        ENEMY_BAR_Y + 2,
+                        enemyBarY + 2,
                         ENEMY_BAR_X + 2 + previewWidth,
-                        ENEMY_BAR_Y + ENEMY_BAR_H - 2
+                        enemyBarY + ENEMY_BAR_H - 2
                 );
             }
         }
 
         g2d.setColor(WHITE);
         String hpText = enemy.getHealth() + " / " + enemy.getMaxHealth();
-        drawCenteredString(g2d, hpText, GameConfig.WIDTH / 2, ENEMY_BAR_Y + ENEMY_BAR_H + 18);
+        drawCenteredString(g2d, hpText, GameConfig.WIDTH / 2, enemyBarY + ENEMY_BAR_H + 18);
         if (previewDamage > 0) {
             g2d.setColor(new Color(255, 162, 228));
-            drawCenteredString(g2d, "POTENTIAL: -" + previewDamage, GameConfig.WIDTH / 2, ENEMY_BAR_Y + ENEMY_BAR_H + 36);
+            drawCenteredString(g2d, "POTENTIAL: -" + previewDamage, GameConfig.WIDTH / 2, enemyBarY + ENEMY_BAR_H + 36);
         }
 
         long now = System.currentTimeMillis();
@@ -494,7 +468,7 @@ public class GamePanel extends JPanel implements ActionListener {
             int alpha = (int) Math.round(255 * (1.0 - popProgress));
             alpha = Math.max(0, Math.min(255, alpha));
             g2d.setColor(new Color(255, 122, 200, alpha));
-            drawCenteredString(g2d, "-" + lastHitDamage, GameConfig.WIDTH / 2, ENEMY_BAR_Y - 18 - yOffset);
+            drawCenteredString(g2d, "-" + lastHitDamage, GameConfig.WIDTH / 2, enemyBarY - 18 - yOffset);
         }
         if (now < lastCoinGainUntilMs && lastCoinGain > 0) {
             double popProgress = 1.0 - ((lastCoinGainUntilMs - now) / 760.0);
@@ -502,7 +476,7 @@ public class GamePanel extends JPanel implements ActionListener {
             int alpha = (int) Math.round(255 * (1.0 - popProgress));
             alpha = Math.max(0, Math.min(255, alpha));
             g2d.setColor(new Color(255, 214, 112, alpha));
-            drawCenteredString(g2d, "+" + lastCoinGain + " COINS", GameConfig.WIDTH / 2, ENEMY_BAR_Y - 34 - yOffset);
+            drawCenteredString(g2d, "+" + lastCoinGain + " COINS", GameConfig.WIDTH / 2, enemyBarY - 34 - yOffset);
         }
     }
 
@@ -515,7 +489,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
         int totalWidth = (count * GameConfig.BOX_SIZE) + ((count - 1) * GameConfig.BOX_GAP);
         int startX = ARENA_X + (ARENA_W - totalWidth) / 2;
-        int y = ARENA_Y + (ARENA_H - GameConfig.BOX_SIZE) / 2;
+        int y = ENCOUNTER_ARENA_Y + (ARENA_H - GameConfig.BOX_SIZE) / 2;
         boolean wrongFlash = roundManager.isWrongFlashActive();
         int progressIndex = roundManager.getProgressIndex();
 
@@ -623,7 +597,7 @@ public class GamePanel extends JPanel implements ActionListener {
                             roundManager.getSequence(),
                             roundManager.getProgressIndex(),
                             ARENA_X,
-                            ARENA_Y,
+                            ENCOUNTER_ARENA_Y,
                             ARENA_W,
                             ARENA_H,
                             GameConfig.BOX_SIZE,
@@ -1050,43 +1024,6 @@ public class GamePanel extends JPanel implements ActionListener {
             int xEnd = xRight - (int) Math.round(segment);
             g2d.drawLine(xRight, yTop, xEnd, yTop);
         }
-    }
-
-    private void drawTimerBar(Graphics2D g2d, int x, int y, int width, int height) {
-        long timeLeft = displayedTimerMs >= 0L ? displayedTimerMs : roundManager.getTimeLeftMs();
-        long duration = displayedTimerDurationMs > 0L ? displayedTimerDurationMs : roundManager.getRoundDurationMs();
-        double progress = duration > 0 ? (double) timeLeft / duration : 0.0;
-        progress = Math.max(0.0, Math.min(1.0, progress));
-
-        double danger = 1.0 - progress;
-        Color fillColor = lerpColor(TIMER_HIGH, TIMER_LOW, danger);
-        if (progress < 0.3) {
-            double pulse = 0.5 + (0.5 * Math.sin(System.currentTimeMillis() / 80.0));
-            fillColor = lerpColor(fillColor, WHITE, pulse * 0.35);
-        }
-
-        g2d.setColor(new Color(2, 12, 32));
-        g2d.fillRect(x, y, width, height);
-        int glowAlpha = 60 + (int) Math.round(70 * progress);
-        g2d.setColor(new Color(GLOW_CYAN.getRed(), GLOW_CYAN.getGreen(), GLOW_CYAN.getBlue(), glowAlpha));
-        g2d.drawRect(x - 1, y - 1, width + 1, height + 1);
-        g2d.setColor(WHITE);
-        g2d.drawRect(x, y, width, height);
-
-        int fillWidth = (int) Math.round((width - 4) * progress);
-        if (fillWidth > 0) {
-            g2d.setColor(fillColor);
-            g2d.fillRect(x + 2, y + 2, fillWidth, height - 3);
-            int sheenHeight = Math.max(1, height / 4);
-            Color sheen = lerpColor(fillColor, WHITE, 0.5);
-            g2d.setColor(new Color(sheen.getRed(), sheen.getGreen(), sheen.getBlue(), 120));
-            g2d.fillRect(x + 2, y + 2, fillWidth, sheenHeight);
-        }
-
-        g2d.setColor(YELLOW);
-        g2d.setFont(SMALL_FONT);
-        String label = String.format("%.1fs", timeLeft / 1000.0);
-        g2d.drawString(label, x + width - 72, y - 8);
     }
 
     private void drawArrow(Graphics2D g2d, Direction direction, int x, int y, int boxSize, Color color) {
