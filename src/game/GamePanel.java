@@ -4,11 +4,13 @@ import game.audio.AudioManager;
 import game.config.GameConfig;
 import game.logic.RoundCompletion;
 import game.logic.RoundManager;
-import game.model.CoinPickup;
 import game.model.Direction;
 import game.model.EncounterEnemy;
 import game.model.EncounterNode;
 import game.model.ScreenState;
+import game.model.TimerStyle;
+import game.visual.BackdropEffects;
+import game.visual.EnemyKillEffects;
 
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
@@ -25,7 +27,6 @@ import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.GradientPaint;
 import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
 import java.awt.Rectangle;
@@ -45,8 +46,6 @@ import java.util.Random;
 
 public class GamePanel extends JPanel implements ActionListener {
     private static final Color BG = new Color(1, 5, 16);
-    private static final Color BG_DEEP = new Color(0, 2, 10);
-    private static final Color BG_MID = new Color(5, 18, 48);
     private static final Color WHITE = new Color(194, 236, 255);
     private static final Color TEXT_DIM = new Color(104, 156, 208);
     private static final Color YELLOW = new Color(94, 245, 255);
@@ -70,8 +69,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int HUD_Y = 30;
     private static final int HUD_W = GameConfig.WIDTH - 80;
     private static final int HUD_H = 150;
-    private static final int HUD_TIMER_X = HUD_X + 250;
-    private static final int HUD_TIMER_W = 460;
+    private static final int HUD_TIMER_W = 620;
+    private static final int HUD_TIMER_X = HUD_X + ((HUD_W - HUD_TIMER_W) / 2);
 
     private static final int ARENA_X = 120;
     private static final int ARENA_Y = 220;
@@ -89,7 +88,6 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int DOOR_W = 16;
     private static final int DOOR_H = 88;
     private static final int PLAYER_SIZE = 18;
-    private static final int COIN_SIZE = 12;
     private static final double PLAYER_SPEED_PER_SECOND = 280.0;
     private static final int ENCOUNTER_SIZE = 18;
     private static final long ENCOUNTER_TRANSITION_MS = 720L;
@@ -99,21 +97,20 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final long MENU_TRANSITION_MS = 520L;
     private static final long MENU_TRANSITION_SWITCH_MS = MENU_TRANSITION_MS / 2;
     private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
-    private static final int BACKDROP_GRID_SPACING = 52;
-    private static final int RIPPLE_MAX_COUNT = 16;
-    private static final int KILL_EFFECT_MAX_COUNT = 10;
-    private static final long ENEMY_KILL_EFFECT_MS = 760L;
+    private static final double TIMER_REFILL_ANIM_PER_SECOND = 3600.0;
+    private static final int MENU_ITEM_START = 0;
+    private static final int MENU_ITEM_TIMER_STYLE = 1;
+    private static final int MENU_ITEM_COUNT = 2;
 
     private final Timer timer;
     private final RoundManager roundManager = new RoundManager();
+    private final BackdropEffects backdropEffects = new BackdropEffects();
+    private final EnemyKillEffects enemyKillEffects = new EnemyKillEffects();
     private final EnumMap<Direction, BufferedImage> arrowSprites = new EnumMap<>(Direction.class);
     private final EnumMap<Direction, BufferedImage> arrowSpritesGreen = new EnumMap<>(Direction.class);
 
     private final Random random = new Random();
     private final List<EncounterNode> roomEncounters = new ArrayList<>();
-    private final List<CoinPickup> roomCoins = new ArrayList<>();
-    private final List<BackgroundRipple> backgroundRipples = new ArrayList<>();
-    private final List<EnemyKillEffect> enemyKillEffects = new ArrayList<>();
 
     private ScreenState screen = ScreenState.MENU;
     private int roomNumber = 1;
@@ -137,24 +134,13 @@ public class GamePanel extends JPanel implements ActionListener {
     private boolean menuTransitionActive;
     private long menuTransitionStartMs;
     private int coinCount;
+    private int lastCoinGain;
+    private long lastCoinGainUntilMs;
     private String activeMusicFile;
-
-    private static class BackgroundRipple {
-        int x;
-        int y;
-        int maxRadius;
-        int bandWidth;
-        double strength;
-        double wavelength;
-        double phase;
-        long startMs;
-        long durationMs;
-    }
-
-    private static class EnemyKillEffect {
-        long startMs;
-        long durationMs;
-    }
+    private long displayedTimerMs = -1L;
+    private long displayedTimerDurationMs = 1L;
+    private TimerStyle selectedTimerStyle = TimerStyle.BACKDROP_HUE;
+    private int menuSelectionIndex = MENU_ITEM_START;
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -201,7 +187,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
         gameG.setColor(BG);
         gameG.fillRect(0, 0, gameWidth, gameHeight);
-        drawBackdrop(gameG);
+        backdropEffects.drawBackdrop(gameG, screen, selectedTimerStyle, getEncounterTimerProgress());
         drawScanlines(gameG);
 
         if (screen == ScreenState.MENU) {
@@ -218,7 +204,6 @@ public class GamePanel extends JPanel implements ActionListener {
             drawDungeonHud(gameG);
             drawDungeon(gameG);
         } else {
-            drawEncounterHud(gameG);
             drawArena(gameG);
             drawSequence(gameG);
         }
@@ -256,7 +241,6 @@ public class GamePanel extends JPanel implements ActionListener {
         } else {
             if (screen == ScreenState.DUNGEON && !encounterTransitionActive) {
                 updateDungeonMovement(deltaSeconds);
-                collectCoinsAtPlayer();
             }
             if (encounterTransitionActive) {
                 long elapsedMs = System.currentTimeMillis() - encounterTransitionStartMs;
@@ -265,6 +249,7 @@ public class GamePanel extends JPanel implements ActionListener {
                     activeEncounterIndex = pendingEncounterIndex;
                     pendingEncounterIndex = -1;
                     roundManager.startGame(false);
+                    resetTimerBarAnimation();
                     screen = ScreenState.ENCOUNTER;
                     encounterIntroActive = true;
                     encounterIntroStartMs = System.currentTimeMillis();
@@ -278,6 +263,7 @@ public class GamePanel extends JPanel implements ActionListener {
             }
             if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && roundManager.hasTimedOut()) {
                 clearMovementInput();
+                clearTimerBarAnimation();
                 AudioManager.playSfx("player_death.wav");
                 screen = ScreenState.LOST;
             }
@@ -288,8 +274,9 @@ public class GamePanel extends JPanel implements ActionListener {
                 runStartFadeInActive = false;
             }
         }
+        updateTimerBarAnimation(deltaSeconds);
         updateBackgroundMusic();
-        updateBackgroundRipples();
+        backdropEffects.update();
         updateEnemyKillEffects();
         repaint();
     }
@@ -310,13 +297,61 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setFont(BODY_FONT);
         g2d.setColor(TEXT_DIM);
         drawCenteredString(g2d, "Arrows Edition", GameConfig.WIDTH / 2, boxY + 145);
-        drawCenteredString(g2d, "Use Arrow Keys in Encounters", GameConfig.WIDTH / 2, boxY + 235);
+        drawCenteredString(g2d, "Use Arrow Keys in Encounters", GameConfig.WIDTH / 2, boxY + 206);
+
+        drawMenuOption(g2d, MENU_ITEM_START, "START RUN", GameConfig.WIDTH / 2, boxY + 265);
+        drawMenuOption(
+                g2d,
+                MENU_ITEM_TIMER_STYLE,
+                "TIMER STYLE: " + selectedTimerStyle.getLabel(),
+                GameConfig.WIDTH / 2,
+                boxY + 305
+        );
 
         g2d.setFont(SMALL_FONT);
-        g2d.setColor(YELLOW);
-        drawCenteredString(g2d, "PRESS ENTER TO START", GameConfig.WIDTH / 2, boxY + boxH - 62);
         g2d.setColor(TEXT_DIM);
-        drawCenteredString(g2d, "WASD / ARROWS MOVE  |  ESC MENU", GameConfig.WIDTH / 2, boxY + boxH - 30);
+        drawCenteredString(g2d, "UP/DOWN SELECT  |  LEFT/RIGHT CHANGE", GameConfig.WIDTH / 2, boxY + boxH - 58);
+        drawCenteredString(g2d, "ENTER CONFIRM  |  ESC MENU", GameConfig.WIDTH / 2, boxY + boxH - 30);
+    }
+
+    private void drawMenuOption(Graphics2D g2d, int optionIndex, String label, int centerX, int baselineY) {
+        boolean selected = menuSelectionIndex == optionIndex;
+        g2d.setFont(BODY_FONT);
+        if (selected) {
+            drawGlowingCenteredString(g2d, "> " + label + " <", centerX, baselineY, YELLOW, GLOW_CYAN);
+        } else {
+            g2d.setColor(WHITE);
+            drawCenteredString(g2d, label, centerX, baselineY);
+        }
+    }
+
+    private void handleMenuDirection(Direction direction) {
+        if (direction == Direction.UP) {
+            menuSelectionIndex = (menuSelectionIndex - 1 + MENU_ITEM_COUNT) % MENU_ITEM_COUNT;
+        } else if (direction == Direction.DOWN) {
+            menuSelectionIndex = (menuSelectionIndex + 1) % MENU_ITEM_COUNT;
+        } else if (menuSelectionIndex == MENU_ITEM_TIMER_STYLE) {
+            if (direction == Direction.LEFT) {
+                cycleTimerStyle(-1);
+            } else if (direction == Direction.RIGHT) {
+                cycleTimerStyle(1);
+            }
+        }
+    }
+
+    private void activateSelectedMenuItem() {
+        if (menuSelectionIndex == MENU_ITEM_START) {
+            startRun();
+        } else if (menuSelectionIndex == MENU_ITEM_TIMER_STYLE) {
+            cycleTimerStyle(1);
+        }
+    }
+
+    private void cycleTimerStyle(int delta) {
+        TimerStyle[] styles = TimerStyle.values();
+        int currentIndex = selectedTimerStyle.ordinal();
+        int nextIndex = (currentIndex + delta + styles.length) % styles.length;
+        selectedTimerStyle = styles[nextIndex];
     }
 
     private void drawDungeonHud(Graphics2D g2d) {
@@ -362,7 +397,6 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.setColor(WHITE);
             g2d.drawRect(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
         }
-        drawCoins(g2d);
         drawEnemyKillEffects(g2d);
 
         Rectangle door = getDoorRect();
@@ -379,36 +413,16 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawEnemyKillEffects(Graphics2D g2d) {
-        if (enemyKillEffects.isEmpty()) {
-            return;
-        }
-
-        long nowMs = System.currentTimeMillis();
-        int strongestFlashAlpha = 0;
-
-        for (EnemyKillEffect effect : enemyKillEffects) {
-            long elapsedMs = nowMs - effect.startMs;
-            if (elapsedMs < 0 || elapsedMs > effect.durationMs) {
-                continue;
-            }
-
-            double progress = elapsedMs / (double) effect.durationMs;
-            double life = 1.0 - progress;
-
-            int flashAlpha = clampInt((int) Math.round(95 * life * life), 0, 255);
-            strongestFlashAlpha = Math.max(strongestFlashAlpha, flashAlpha);
-        }
-
-        if (strongestFlashAlpha > 0) {
-            g2d.setColor(new Color(120, 226, 255, strongestFlashAlpha));
-            g2d.fillRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
-        }
+        enemyKillEffects.draw(g2d, ROOM_X, ROOM_Y, ROOM_W, ROOM_H);
     }
 
     private void drawArena(Graphics2D g2d) {
         g2d.setColor(ARENA_GLASS);
         g2d.fillRect(ARENA_X + 2, ARENA_Y + 2, ARENA_W - 3, ARENA_H - 3);
         drawFrame(g2d, ARENA_X, ARENA_Y, ARENA_W, ARENA_H, 4, WHITE);
+        if (selectedTimerStyle == TimerStyle.BORDER_RING) {
+            drawEncounterTimerBorder(g2d, ARENA_X, ARENA_Y, ARENA_W, ARENA_H);
+        }
         g2d.setColor(WHITE);
         g2d.setFont(SMALL_FONT);
         drawGlowingCenteredString(g2d, "ENCOUNTER", GameConfig.WIDTH / 2, ARENA_Y + 34, WHITE, GLOW_CYAN);
@@ -481,6 +495,14 @@ public class GamePanel extends JPanel implements ActionListener {
             alpha = Math.max(0, Math.min(255, alpha));
             g2d.setColor(new Color(255, 122, 200, alpha));
             drawCenteredString(g2d, "-" + lastHitDamage, GameConfig.WIDTH / 2, ENEMY_BAR_Y - 18 - yOffset);
+        }
+        if (now < lastCoinGainUntilMs && lastCoinGain > 0) {
+            double popProgress = 1.0 - ((lastCoinGainUntilMs - now) / 760.0);
+            int yOffset = (int) Math.round(12 * popProgress);
+            int alpha = (int) Math.round(255 * (1.0 - popProgress));
+            alpha = Math.max(0, Math.min(255, alpha));
+            g2d.setColor(new Color(255, 214, 112, alpha));
+            drawCenteredString(g2d, "+" + lastCoinGain + " COINS", GameConfig.WIDTH / 2, ENEMY_BAR_Y - 34 - yOffset);
         }
     }
 
@@ -563,7 +585,7 @@ public class GamePanel extends JPanel implements ActionListener {
                     return;
                 }
                 if (screen == ScreenState.MENU) {
-                    startRun();
+                    activateSelectedMenuItem();
                 } else if (screen == ScreenState.LOST) {
                     startRun();
                 }
@@ -590,9 +612,23 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put(actionName, new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                if (screen == ScreenState.MENU && !menuTransitionActive) {
+                    handleMenuDirection(direction);
+                    return;
+                }
                 if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive) {
                     AudioManager.playClickSfx();
-                    spawnInputRipple(direction.ordinal());
+                    backdropEffects.spawnInputRipple(
+                            direction.ordinal(),
+                            roundManager.getSequence(),
+                            roundManager.getProgressIndex(),
+                            ARENA_X,
+                            ARENA_Y,
+                            ARENA_W,
+                            ARENA_H,
+                            GameConfig.BOX_SIZE,
+                            GameConfig.BOX_GAP
+                    );
                     handleEncounterInput(direction.ordinal());
                 }
             }
@@ -619,7 +655,10 @@ public class GamePanel extends JPanel implements ActionListener {
     private void startRun() {
         roomNumber = 1;
         coinCount = 0;
+        lastCoinGain = 0;
+        lastCoinGainUntilMs = 0L;
         clearMovementInput();
+        clearTimerBarAnimation();
         menuTransitionActive = false;
         encounterTransitionActive = false;
         pendingEncounterIndex = -1;
@@ -627,6 +666,7 @@ public class GamePanel extends JPanel implements ActionListener {
         runStartFadeInActive = true;
         runStartFadeInStartMs = System.currentTimeMillis();
         enemyKillEffects.clear();
+        backdropEffects.clearHueSweeps();
         roundManager.startGame(true);
         generateRoom();
         AudioManager.playSfx("enter_game.wav");
@@ -635,7 +675,6 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void generateRoom() {
         roomEncounters.clear();
-        roomCoins.clear();
         activeEncounterIndex = -1;
         pendingEncounterIndex = -1;
         menuTransitionActive = false;
@@ -644,6 +683,7 @@ public class GamePanel extends JPanel implements ActionListener {
         lastHitDamage = 0;
         lastHitUntilMs = 0;
         enemyKillEffects.clear();
+        backdropEffects.clearHueSweeps();
 
         playerX = ROOM_X + 26;
         playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
@@ -749,6 +789,7 @@ public class GamePanel extends JPanel implements ActionListener {
         clearMovementInput();
         lastHitDamage = 0;
         lastHitUntilMs = 0;
+        backdropEffects.clearHueSweeps();
         AudioManager.playSfx("encounter_start.wav");
         pendingEncounterIndex = encounterIndex;
         encounterTransitionActive = true;
@@ -760,6 +801,8 @@ public class GamePanel extends JPanel implements ActionListener {
         if (completion == null || activeEncounterIndex < 0 || activeEncounterIndex >= roomEncounters.size()) {
             return;
         }
+
+        backdropEffects.triggerHueSweepRipple(completion, roundManager.getTimeLeftMs(), selectedTimerStyle);
 
         EncounterNode currentNode = roomEncounters.get(activeEncounterIndex);
         int damage = Math.max(0, completion.getResolvedDamage());
@@ -773,17 +816,26 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         boolean enemyDefeated = currentNode.isCleared();
+        int coinReward = calculateComboCoinReward(completion);
+        if (coinReward > 0) {
+            coinCount += coinReward;
+            lastCoinGain = coinReward;
+            lastCoinGainUntilMs = System.currentTimeMillis() + 760L;
+            if (!enemyDefeated) {
+                AudioManager.playSfx("coin_collect.wav");
+            }
+        }
         if (enemyDefeated) {
             spawnEnemyDefeatEffect(currentNode);
-            spawnCoinsForDefeat(currentNode);
             AudioManager.playSfx("enemy_defeated.wav");
         } else {
-            AudioManager.playSfx("sequence_done.wav");
+            AudioManager.playSfx("bar_fill.wav");
         }
 
         if (enemyDefeated) {
             activeEncounterIndex = -1;
             clearMovementInput();
+            clearTimerBarAnimation();
             screen = ScreenState.DUNGEON;
         }
     }
@@ -791,97 +843,35 @@ public class GamePanel extends JPanel implements ActionListener {
     private void spawnEnemyDefeatEffect(EncounterNode node) {
         int centerX = node.getX() + (ENCOUNTER_SIZE / 2);
         int centerY = node.getY() + (ENCOUNTER_SIZE / 2);
-        long nowMs = System.currentTimeMillis();
-
-        EnemyKillEffect effect = new EnemyKillEffect();
-        effect.startMs = nowMs;
-        effect.durationMs = ENEMY_KILL_EFFECT_MS + random.nextInt(181);
-        enemyKillEffects.add(effect);
-        if (enemyKillEffects.size() > KILL_EFFECT_MAX_COUNT) {
-            enemyKillEffects.remove(0);
-        }
-
-        spawnBackdropRippleAt(
-                centerX + random.nextInt(17) - 8,
-                centerY + random.nextInt(17) - 8,
-                430,
-                250,
-                42,
-                38,
-                24.0,
-                13.0,
-                18.0,
-                14.0,
-                980L,
-                430
-        );
-        spawnBackdropRippleAt(
-                centerX + random.nextInt(15) - 7,
-                centerY + random.nextInt(15) - 7,
-                330,
-                220,
-                38,
-                34,
-                20.0,
-                11.0,
-                16.0,
-                15.0,
-                860L,
-                380
-        );
+        enemyKillEffects.spawn();
+        backdropEffects.spawnEnemyDefeatRipples(centerX, centerY);
     }
 
-    private void spawnCoinsForDefeat(EncounterNode node) {
-        int centerX = node.getX() + (ENCOUNTER_SIZE / 2);
-        int centerY = node.getY() + (ENCOUNTER_SIZE / 2);
-        int drops = 2 + random.nextInt(4);
-
-        for (int i = 0; i < drops; i++) {
-            int dropX = centerX + (random.nextInt(31) - 15) - (COIN_SIZE / 2);
-            int dropY = centerY + (random.nextInt(31) - 15) - (COIN_SIZE / 2);
-            int clampedX = clampInt(dropX, ROOM_X + 4, ROOM_X + ROOM_W - COIN_SIZE - 4);
-            int clampedY = clampInt(dropY, ROOM_Y + 4, ROOM_Y + ROOM_H - COIN_SIZE - 4);
-            roomCoins.add(new CoinPickup(clampedX, clampedY, 1));
-        }
-    }
-
-    private void collectCoinsAtPlayer() {
-        if (roomCoins.isEmpty()) {
-            return;
+    private int calculateComboCoinReward(RoundCompletion completion) {
+        int damage = Math.max(0, completion.getResolvedDamage());
+        if (damage <= 0) {
+            return 0;
         }
 
-        Rectangle playerRect = new Rectangle(
-                (int) Math.round(playerX),
-                (int) Math.round(playerY),
-                PLAYER_SIZE,
-                PLAYER_SIZE
-        );
-        int collectedValue = 0;
-        for (int i = roomCoins.size() - 1; i >= 0; i--) {
-            CoinPickup coin = roomCoins.get(i);
-            Rectangle coinRect = new Rectangle(coin.getX(), coin.getY(), COIN_SIZE, COIN_SIZE);
-            if (!playerRect.intersects(coinRect)) {
-                continue;
-            }
-            collectedValue += coin.getValue();
-            roomCoins.remove(i);
+        double duration = Math.max(1.0, completion.getRoundDurationMs());
+        double timeLeftRatio = completion.getTimeLeftMs() / duration;
+        timeLeftRatio = Math.max(0.0, Math.min(1.0, timeLeftRatio));
+
+        int sequenceLength = completion.getSequenceLength();
+        int base = Math.max(1, (int) Math.round(damage * 0.20));
+        int lengthBonus = Math.max(0, sequenceLength - GameConfig.MIN_SEQUENCE_LENGTH);
+        int speedBonus = (int) Math.round(timeLeftRatio * (2.0 + (sequenceLength * 1.1)));
+
+        int comboTierBonus = 0;
+        if (timeLeftRatio >= 0.82) {
+            comboTierBonus = 4 + lengthBonus;
+        } else if (timeLeftRatio >= 0.68) {
+            comboTierBonus = 2 + (lengthBonus / 2);
+        } else if (timeLeftRatio >= 0.52) {
+            comboTierBonus = 1;
         }
 
-        if (collectedValue > 0) {
-            coinCount += collectedValue;
-            AudioManager.playSfx("coin_collect.wav");
-        }
-    }
-
-    private void drawCoins(Graphics2D g2d) {
-        for (CoinPickup coin : roomCoins) {
-            int x = coin.getX();
-            int y = coin.getY();
-            g2d.setColor(new Color(255, 192, 66));
-            g2d.fillOval(x, y, COIN_SIZE, COIN_SIZE);
-            g2d.setColor(WHITE);
-            g2d.drawOval(x, y, COIN_SIZE, COIN_SIZE);
-        }
+        return base + lengthBonus + speedBonus + comboTierBonus;
     }
 
     private int countUnclearedEncounters() {
@@ -957,9 +947,114 @@ public class GamePanel extends JPanel implements ActionListener {
         lastTickNanos = System.nanoTime();
     }
 
-    private void drawTimerBar(Graphics2D g2d, int x, int y, int width, int height) {
+    private void updateTimerBarAnimation(double deltaSeconds) {
+        if (screen != ScreenState.ENCOUNTER) {
+            clearTimerBarAnimation();
+            return;
+        }
+
+        long targetTimeLeft = roundManager.getTimeLeftMs();
+        long duration = Math.max(1L, roundManager.getRoundDurationMs());
+        displayedTimerDurationMs = duration;
+
+        if (displayedTimerMs < 0L) {
+            displayedTimerMs = targetTimeLeft;
+            return;
+        }
+
+        if (targetTimeLeft < displayedTimerMs) {
+            displayedTimerMs = targetTimeLeft;
+        } else if (targetTimeLeft > displayedTimerMs) {
+            long refillStep = Math.max(1L, Math.round(TIMER_REFILL_ANIM_PER_SECOND * deltaSeconds));
+            displayedTimerMs = Math.min(targetTimeLeft, displayedTimerMs + refillStep);
+        }
+
+        displayedTimerMs = Math.max(0L, Math.min(duration, displayedTimerMs));
+    }
+
+    private void resetTimerBarAnimation() {
         long timeLeft = roundManager.getTimeLeftMs();
-        long duration = roundManager.getRoundDurationMs();
+        displayedTimerMs = timeLeft;
+        displayedTimerDurationMs = Math.max(1L, roundManager.getRoundDurationMs());
+    }
+
+    private void clearTimerBarAnimation() {
+        displayedTimerMs = -1L;
+        displayedTimerDurationMs = 1L;
+    }
+
+    private void drawEncounterTimerBorder(Graphics2D g2d, int x, int y, int width, int height) {
+        long timeLeft = displayedTimerMs >= 0L ? displayedTimerMs : roundManager.getTimeLeftMs();
+        long duration = displayedTimerDurationMs > 0L ? displayedTimerDurationMs : roundManager.getRoundDurationMs();
+        double progress = duration > 0 ? (double) timeLeft / duration : 0.0;
+        progress = Math.max(0.0, Math.min(1.0, progress));
+
+        double danger = 1.0 - progress;
+        Color activeColor = lerpColor(TIMER_HIGH, TIMER_LOW, danger);
+        if (progress < 0.28) {
+            double pulse = 0.5 + (0.5 * Math.sin(System.currentTimeMillis() / 80.0));
+            activeColor = lerpColor(activeColor, WHITE, pulse * 0.45);
+        }
+
+        int borderInset = 7;
+        int bx = x - borderInset;
+        int by = y - borderInset;
+        int bw = width + (borderInset * 2);
+        int bh = height + (borderInset * 2);
+
+        Stroke old = g2d.getStroke();
+        g2d.setStroke(new BasicStroke(5f));
+        g2d.setColor(new Color(30, 68, 116, 160));
+        g2d.drawRect(bx, by, bw, bh);
+
+        g2d.setColor(new Color(activeColor.getRed(), activeColor.getGreen(), activeColor.getBlue(), 240));
+        g2d.drawRect(bx, by, bw, bh);
+
+        double perimeter = (bw * 2.0) + (bh * 2.0);
+        double depletedLength = perimeter * (1.0 - progress);
+        if (depletedLength > 0.0) {
+            g2d.setColor(new Color(6, 16, 34, 235));
+            drawCounterClockwiseBorderSegment(g2d, bx, by, bw, bh, depletedLength);
+        }
+
+        g2d.setStroke(old);
+    }
+
+    private void drawCounterClockwiseBorderSegment(Graphics2D g2d, int x, int y, int width, int height, double length) {
+        double remaining = Math.max(0.0, length);
+        int xLeft = x;
+        int xRight = x + width;
+        int yTop = y;
+        int yBottom = y + height;
+
+        if (remaining > 0.0) {
+            double segment = Math.min(remaining, height);
+            int yEnd = yTop + (int) Math.round(segment);
+            g2d.drawLine(xLeft, yTop, xLeft, yEnd);
+            remaining -= segment;
+        }
+        if (remaining > 0.0) {
+            double segment = Math.min(remaining, width);
+            int xEnd = xLeft + (int) Math.round(segment);
+            g2d.drawLine(xLeft, yBottom, xEnd, yBottom);
+            remaining -= segment;
+        }
+        if (remaining > 0.0) {
+            double segment = Math.min(remaining, height);
+            int yEnd = yBottom - (int) Math.round(segment);
+            g2d.drawLine(xRight, yBottom, xRight, yEnd);
+            remaining -= segment;
+        }
+        if (remaining > 0.0) {
+            double segment = Math.min(remaining, width);
+            int xEnd = xRight - (int) Math.round(segment);
+            g2d.drawLine(xRight, yTop, xEnd, yTop);
+        }
+    }
+
+    private void drawTimerBar(Graphics2D g2d, int x, int y, int width, int height) {
+        long timeLeft = displayedTimerMs >= 0L ? displayedTimerMs : roundManager.getTimeLeftMs();
+        long duration = displayedTimerDurationMs > 0L ? displayedTimerDurationMs : roundManager.getRoundDurationMs();
         double progress = duration > 0 ? (double) timeLeft / duration : 0.0;
         progress = Math.max(0.0, Math.min(1.0, progress));
 
@@ -1241,6 +1336,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void startMenuTransition() {
         clearMovementInput();
+        backdropEffects.clearHueSweeps();
         encounterTransitionActive = false;
         pendingEncounterIndex = -1;
         encounterIntroActive = false;
@@ -1302,204 +1398,18 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.fillPolygon(xs, ys, 4);
     }
 
-    private void drawBackdrop(Graphics2D g2d) {
-        GradientPaint gradient = new GradientPaint(0, 0, BG_MID, 0, GameConfig.HEIGHT, BG_DEEP);
-        g2d.setPaint(gradient);
-        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
-
-        long nowMs = System.currentTimeMillis();
-        double t = nowMs / 1000.0;
-        drawFlowField(g2d, t);
-        int pulseA = 36 + (int) Math.round(22 * ((Math.sin(t * 1.7) + 1.0) / 2.0));
-        g2d.setColor(new Color(56, 176, 255, pulseA));
-        g2d.fillOval(GameConfig.WIDTH - 300, -140, 430, 430);
-        g2d.fillOval(-180, GameConfig.HEIGHT - 270, 410, 410);
-
-        drawWarpedGrid(g2d, nowMs);
-    }
-
-    private void drawFlowField(Graphics2D g2d, double t) {
-        for (int i = 0; i < 4; i++) {
-            int amplitude = 20 + (i * 8);
-            int yBase = 140 + (i * 120);
-            int alpha = 24 - (i * 4);
-            g2d.setColor(new Color(80, 190, 255, Math.max(8, alpha)));
-            int previousX = 0;
-            int previousY = yBase + (int) Math.round(Math.sin((t * 1.2) + (i * 0.7)) * amplitude);
-            for (int x = 24; x <= GameConfig.WIDTH; x += 24) {
-                double wave = Math.sin((x * 0.012) + (t * (1.3 + (i * 0.18))) + (i * 0.5));
-                int y = yBase + (int) Math.round(wave * amplitude);
-                g2d.drawLine(previousX, previousY, x, y);
-                previousX = x;
-                previousY = y;
-            }
+    private double getEncounterTimerProgress() {
+        long timeLeft = displayedTimerMs >= 0L ? displayedTimerMs : roundManager.getTimeLeftMs();
+        long duration = displayedTimerDurationMs > 0L ? displayedTimerDurationMs : roundManager.getRoundDurationMs();
+        if (duration <= 0L) {
+            return 0.0;
         }
-    }
-
-    private void drawWarpedGrid(Graphics2D g2d, long nowMs) {
-        g2d.setColor(new Color(63, 126, 205, 28));
-        double[] warp = new double[2];
-        int step = 10;
-
-        for (int y = 0; y <= GameConfig.HEIGHT; y += BACKDROP_GRID_SPACING) {
-            int prevX = 0;
-            calculateRippleWarp(0, y, nowMs, warp);
-            int prevY = (int) Math.round(y + warp[1]);
-            for (int x = step; x <= GameConfig.WIDTH; x += step) {
-                calculateRippleWarp(x, y, nowMs, warp);
-                int warpedX = (int) Math.round(x + warp[0]);
-                int warpedY = (int) Math.round(y + warp[1]);
-                g2d.drawLine(prevX, prevY, warpedX, warpedY);
-                prevX = warpedX;
-                prevY = warpedY;
-            }
-        }
-
-        for (int x = 0; x <= GameConfig.WIDTH; x += BACKDROP_GRID_SPACING) {
-            int prevY = 0;
-            calculateRippleWarp(x, 0, nowMs, warp);
-            int prevX = (int) Math.round(x + warp[0]);
-            for (int y = step; y <= GameConfig.HEIGHT; y += step) {
-                calculateRippleWarp(x, y, nowMs, warp);
-                int warpedX = (int) Math.round(x + warp[0]);
-                int warpedY = (int) Math.round(y + warp[1]);
-                g2d.drawLine(prevX, prevY, warpedX, warpedY);
-                prevX = warpedX;
-                prevY = warpedY;
-            }
-        }
-    }
-
-    private void calculateRippleWarp(double x, double y, long nowMs, double[] outWarp) {
-        double warpX = 0.0;
-        double warpY = 0.0;
-
-        for (BackgroundRipple ripple : backgroundRipples) {
-            long elapsedMs = nowMs - ripple.startMs;
-            if (elapsedMs < 0 || elapsedMs > ripple.durationMs) {
-                continue;
-            }
-
-            double progress = elapsedMs / (double) ripple.durationMs;
-            double life = 1.0 - progress;
-            double dx = x - ripple.x;
-            double dy = y - ripple.y;
-            double distance = Math.sqrt((dx * dx) + (dy * dy));
-            if (distance < 0.0001) {
-                continue;
-            }
-
-            double radius = 14.0 + (ripple.maxRadius * progress);
-            double bandDistance = Math.abs(distance - radius);
-            if (bandDistance > ripple.bandWidth * 1.15) {
-                continue;
-            }
-
-            double bandFalloff = 1.0 - (bandDistance / (ripple.bandWidth * 1.15));
-            bandFalloff = Math.pow(Math.max(0.0, bandFalloff), 1.35);
-            double phase = (distance / ripple.wavelength) - (progress * 15.8) + ripple.phase;
-            double wave = Math.sin(phase);
-            double swirl = Math.cos((phase * 0.68) + 0.6);
-
-            double nx = dx / distance;
-            double ny = dy / distance;
-            double amplitude = ripple.strength * (0.34 + (0.66 * life)) * bandFalloff;
-            warpX += (nx * wave * amplitude) + (-ny * swirl * amplitude * 0.55);
-            warpY += (ny * wave * amplitude) + (nx * swirl * amplitude * 0.55);
-        }
-
-        double magnitude = Math.sqrt((warpX * warpX) + (warpY * warpY));
-        if (magnitude > 44.0) {
-            double scale = 44.0 / magnitude;
-            warpX *= scale;
-            warpY *= scale;
-        }
-
-        outWarp[0] = warpX;
-        outWarp[1] = warpY;
-    }
-
-    private void spawnInputRipple(int symbol) {
-        List<Integer> sequence = roundManager.getSequence();
-        if (sequence.isEmpty()) {
-            return;
-        }
-
-        int count = sequence.size();
-        int sequenceIndex = findRippleSequenceIndex(sequence, roundManager.getProgressIndex(), symbol);
-        if (sequenceIndex < 0) {
-            return;
-        }
-
-        int totalWidth = (count * GameConfig.BOX_SIZE) + ((count - 1) * GameConfig.BOX_GAP);
-        int startX = ARENA_X + (ARENA_W - totalWidth) / 2;
-        int spawnX = startX + (sequenceIndex * (GameConfig.BOX_SIZE + GameConfig.BOX_GAP)) + (GameConfig.BOX_SIZE / 2);
-        int spawnY = ARENA_Y + (ARENA_H / 2);
-        spawnBackdropRippleAt(spawnX, spawnY, 300, 211, 34, 43, 15.0, 12.0, 22.0, 20.0, 760L, 501);
-    }
-
-    private void spawnBackdropRippleAt(
-            int x,
-            int y,
-            int minRadius,
-            int radiusRange,
-            int minBandWidth,
-            int bandWidthRange,
-            double minStrength,
-            double strengthRange,
-            double minWavelength,
-            double wavelengthRange,
-            long minDurationMs,
-            int durationRangeMs
-    ) {
-        BackgroundRipple ripple = new BackgroundRipple();
-        ripple.x = x;
-        ripple.y = y;
-        ripple.maxRadius = minRadius + random.nextInt(Math.max(1, radiusRange));
-        ripple.bandWidth = minBandWidth + random.nextInt(Math.max(1, bandWidthRange));
-        ripple.strength = minStrength + (random.nextDouble() * strengthRange);
-        ripple.wavelength = minWavelength + (random.nextDouble() * wavelengthRange);
-        ripple.phase = random.nextDouble() * Math.PI * 2.0;
-        ripple.startMs = System.currentTimeMillis();
-        ripple.durationMs = minDurationMs + random.nextInt(Math.max(1, durationRangeMs));
-        backgroundRipples.add(ripple);
-
-        while (backgroundRipples.size() > RIPPLE_MAX_COUNT) {
-            backgroundRipples.remove(0);
-        }
-    }
-
-    private int findRippleSequenceIndex(List<Integer> sequence, int progressIndex, int symbol) {
-        int size = sequence.size();
-        if (size == 0) {
-            return -1;
-        }
-
-        int clampedProgress = Math.max(0, Math.min(progressIndex, size - 1));
-        if (sequence.get(clampedProgress) == symbol) {
-            return clampedProgress;
-        }
-        for (int i = clampedProgress + 1; i < size; i++) {
-            if (sequence.get(i) == symbol) {
-                return i;
-            }
-        }
-        for (int i = clampedProgress - 1; i >= 0; i--) {
-            if (sequence.get(i) == symbol) {
-                return i;
-            }
-        }
-        return clampedProgress;
-    }
-
-    private void updateBackgroundRipples() {
-        long nowMs = System.currentTimeMillis();
-        backgroundRipples.removeIf(ripple -> nowMs - ripple.startMs > ripple.durationMs);
+        double progress = timeLeft / (double) duration;
+        return Math.max(0.0, Math.min(1.0, progress));
     }
 
     private void updateEnemyKillEffects() {
-        long nowMs = System.currentTimeMillis();
-        enemyKillEffects.removeIf(effect -> nowMs - effect.startMs > effect.durationMs);
+        enemyKillEffects.update();
     }
 
     private void drawGlowingCenteredString(

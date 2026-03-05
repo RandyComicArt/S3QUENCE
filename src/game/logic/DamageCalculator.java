@@ -15,11 +15,21 @@ public final class DamageCalculator {
             return 0;
         }
 
-        double sequenceFactor = 0.9 + ((sequenceLength - GameConfig.MIN_SEQUENCE_LENGTH) * 0.12);
-        double keyProgressFactor = 0.82 + (Math.max(0, keyIndex) * 0.12);
-        double base = 2.4 + (sequenceLength * 0.72);
+        // Keep longer sequences rewarding, but avoid runaway scaling.
+        int safeLength = Math.max(GameConfig.MIN_SEQUENCE_LENGTH, sequenceLength);
+        double lengthDelta = safeLength - GameConfig.MIN_SEQUENCE_LENGTH;
+        double sequenceFactor = 1.0 + (lengthDelta * 0.03);
 
-        int increment = (int) Math.round(base * sequenceFactor * keyProgressFactor * speedFactor);
+        // Use relative key progress so long sequences don't gain huge per-key multipliers.
+        double progress = safeLength > 1
+                ? Math.max(0.0, Math.min(1.0, keyIndex / (double) (safeLength - 1)))
+                : 0.0;
+        double keyProgressFactor = 0.92 + (progress * 0.16);
+        double base = 3.8;
+
+        int increment = (int) Math.round(
+                base * sequenceFactor * keyProgressFactor * speedFactor * GameConfig.DAMAGE_OUTPUT_SCALE
+        );
         return Math.max(0, increment);
     }
 

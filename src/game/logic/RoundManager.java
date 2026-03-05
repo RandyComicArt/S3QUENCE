@@ -14,49 +14,57 @@ public class RoundManager {
 
     private int progressIndex;
     private int roundsCleared;
-    private long roundStartTimeMs;
-    private long roundDurationMs;
+    private long sequenceStartTimeMs;
+    private long timerMaxMs;
+    private long timerRemainingMs;
+    private long lastTimerUpdateMs;
     private long wrongFlashUntilMs;
     private int pendingDamage;
     private long lastCorrectInputTimeMs;
     private boolean sequenceCompleteHoldActive;
     private long sequenceCompleteHoldUntilMs;
     private long heldTimeLeftMs;
+    private long pendingTimeRestoreMs;
 
     public void startGame(boolean resetScore) {
         if (resetScore) {
             roundsCleared = 0;
         }
-        startNewRound();
+        timerMaxMs = Math.max(1L, GameConfig.ENCOUNTER_MAX_TIME_MS);
+        timerRemainingMs = Math.min(timerMaxMs, Math.max(0L, GameConfig.ENCOUNTER_START_TIME_MS));
+        lastTimerUpdateMs = System.currentTimeMillis();
+        startNewSequence();
     }
 
     public RoundCompletion handleSymbolInput(int input) {
-        updateSequenceCompleteHold();
+        updateRuntimeState();
         long now = System.currentTimeMillis();
         if (sequenceCompleteHoldActive || now < wrongFlashUntilMs || sequence.isEmpty()) {
             return null;
         }
 
         if (sequence.get(progressIndex) == input) {
-            long cadenceReferenceMs = lastCorrectInputTimeMs > 0L ? lastCorrectInputTimeMs : roundStartTimeMs;
+            long cadenceReferenceMs = lastCorrectInputTimeMs > 0L ? lastCorrectInputTimeMs : sequenceStartTimeMs;
             long cadenceMs = Math.max(0L, now - cadenceReferenceMs);
             int increment = DamageCalculator.calculatePotentialIncrement(sequence.size(), progressIndex, cadenceMs);
             pendingDamage += increment;
+            timerRemainingMs = Math.min(timerMaxMs, timerRemainingMs + GameConfig.TIME_RESTORE_PER_CORRECT_KEY_MS);
 
             lastCorrectInputTimeMs = now;
 
             progressIndex++;
             if (progressIndex == sequence.size()) {
-                long elapsedMs = Math.max(0L, now - roundStartTimeMs);
-                long timeLeftMs = Math.max(0L, roundDurationMs - elapsedMs);
+                long sequenceElapsedMs = Math.max(0L, now - sequenceStartTimeMs);
+                long timeLeftMs = Math.max(0L, timerRemainingMs);
                 int pendingBeforeResolve = pendingDamage;
+                pendingTimeRestoreMs = calculateTimeRestoreMs(sequence.size(), sequenceElapsedMs, timeLeftMs);
                 heldTimeLeftMs = timeLeftMs;
                 sequenceCompleteHoldActive = true;
                 sequenceCompleteHoldUntilMs = now + GameConfig.SEQUENCE_COMPLETE_HOLD_MS;
                 RoundCompletion completion = new RoundCompletion(
                         sequence.size(),
-                        roundDurationMs,
-                        elapsedMs,
+                        timerMaxMs,
+                        Math.max(0L, timerMaxMs - timeLeftMs),
                         timeLeftMs,
                         pendingBeforeResolve,
                         pendingBeforeResolve
@@ -73,17 +81,17 @@ public class RoundManager {
 
         wrongFlashUntilMs = now + GameConfig.WRONG_FLASH_MS;
         progressIndex = 0;
-        resetComboState();
+        clearComboState();
         return null;
     }
 
     public List<Integer> getSequence() {
-        updateSequenceCompleteHold();
+        updateRuntimeState();
         return Collections.unmodifiableList(sequence);
     }
 
     public int getProgressIndex() {
-        updateSequenceCompleteHold();
+        updateRuntimeState();
         return progressIndex;
     }
 
@@ -92,38 +100,38 @@ public class RoundManager {
     }
 
     public long getTimeLeftMs() {
-        updateSequenceCompleteHold();
+        updateRuntimeState();
         if (sequenceCompleteHoldActive) {
-            return Math.max(1L, heldTimeLeftMs);
+            long displayed = heldTimeLeftMs + pendingTimeRestoreMs;
+            return Math.max(1L, Math.min(timerMaxMs, displayed));
         }
-        long elapsed = System.currentTimeMillis() - roundStartTimeMs;
-        return Math.max(0, roundDurationMs - elapsed);
+        return Math.max(0L, timerRemainingMs);
     }
 
     public long getRoundDurationMs() {
-        updateSequenceCompleteHold();
-        return roundDurationMs;
+        updateRuntimeState();
+        return timerMaxMs;
     }
 
     public boolean isWrongFlashActive() {
-        updateSequenceCompleteHold();
+        updateRuntimeState();
         return System.currentTimeMillis() < wrongFlashUntilMs;
     }
 
     public boolean hasTimedOut() {
-        updateSequenceCompleteHold();
+        updateRuntimeState();
         if (sequenceCompleteHoldActive) {
             return false;
         }
-        return getTimeLeftMs() <= 0;
+        return timerRemainingMs <= 0L;
     }
 
     public int getPendingDamage() {
-        updateSequenceCompleteHold();
+        updateRuntimeState();
         return pendingDamage;
     }
 
-    private void startNewRound() {
+    private void startNewSequence() {
         sequence.clear();
         int sequenceLength = random.nextInt(
                 GameConfig.MAX_SEQUENCE_LENGTH - GameConfig.MIN_SEQUENCE_LENGTH + 1
@@ -135,26 +143,65 @@ public class RoundManager {
 
         progressIndex = 0;
         wrongFlashUntilMs = 0;
-        roundStartTimeMs = System.currentTimeMillis();
-        roundDurationMs = GameConfig.BASE_ROUND_TIME_MS + (sequenceLength * GameConfig.TIME_PER_SYMBOL_MS);
-        resetComboState();
-    }
-
-    private void resetComboState() {
-        pendingDamage = 0;
-        lastCorrectInputTimeMs = 0L;
+        sequenceStartTimeMs = System.currentTimeMillis();
+        clearComboState();
         sequenceCompleteHoldActive = false;
         sequenceCompleteHoldUntilMs = 0L;
         heldTimeLeftMs = 0L;
+        pendingTimeRestoreMs = 0L;
     }
 
-    private void updateSequenceCompleteHold() {
+    private void clearComboState() {
+        pendingDamage = 0;
+        lastCorrectInputTimeMs = 0L;
+    }
+
+    private void updateRuntimeState() {
+        long now = System.currentTimeMillis();
+        updateTimer(now);
+        updateSequenceCompleteHold(now);
+    }
+
+    private void updateTimer(long now) {
+        if (lastTimerUpdateMs == 0L) {
+            lastTimerUpdateMs = now;
+            return;
+        }
+        long elapsedMs = Math.max(0L, now - lastTimerUpdateMs);
+        lastTimerUpdateMs = now;
+        if (elapsedMs <= 0L || sequenceCompleteHoldActive) {
+            return;
+        }
+        timerRemainingMs = Math.max(0L, timerRemainingMs - elapsedMs);
+    }
+
+    private void updateSequenceCompleteHold(long now) {
         if (!sequenceCompleteHoldActive) {
             return;
         }
-        if (System.currentTimeMillis() < sequenceCompleteHoldUntilMs) {
+        if (now < sequenceCompleteHoldUntilMs) {
             return;
         }
-        startNewRound();
+
+        timerRemainingMs = Math.min(timerMaxMs, timerRemainingMs + pendingTimeRestoreMs);
+        pendingTimeRestoreMs = 0L;
+        sequenceCompleteHoldActive = false;
+        sequenceCompleteHoldUntilMs = 0L;
+        heldTimeLeftMs = 0L;
+        lastTimerUpdateMs = now;
+        startNewSequence();
+    }
+
+    private long calculateTimeRestoreMs(int sequenceLength, long sequenceElapsedMs, long timeLeftMs) {
+        long base = GameConfig.TIME_RESTORE_BASE_MS + (sequenceLength * GameConfig.TIME_RESTORE_PER_SYMBOL_MS);
+
+        double speedTargetMs = 900.0 + (sequenceLength * 320.0);
+        double speedRatio = 1.0 - Math.min(1.0, sequenceElapsedMs / speedTargetMs);
+        long speedBonus = Math.round(speedRatio * GameConfig.TIME_RESTORE_SPEED_BONUS_MS);
+
+        double pressureRatio = 1.0 - Math.min(1.0, timeLeftMs / (double) Math.max(1L, timerMaxMs));
+        long pressureBonus = Math.round(pressureRatio * GameConfig.TIME_RESTORE_PRESSURE_BONUS_MS);
+
+        return Math.max(GameConfig.TIME_RESTORE_MIN_MS, base + speedBonus + pressureBonus);
     }
 }
