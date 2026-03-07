@@ -749,9 +749,17 @@ public class GamePanel extends JPanel implements ActionListener {
                 }
             }
         } else if (playerRect.intersects(getDoorRect())) {
+            // remember which door we used in the current room before the room is regenerated
+            Direction exitedDir = doorDirection;
+
             roomNumber++;
             AudioManager.playSfx("next_room.wav");
+
+            // create the next room (this will randomize doorDirection for the new room)
             generateRoom();
+
+            // put the player just inside the new room on the side corresponding to the door they came through
+            positionPlayerFromEntry(exitedDir);
         }
     }
 
@@ -936,6 +944,85 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private double clampDouble(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    //directional room helper method
+    private void positionPlayerFromEntry(Direction exitedDir) {
+        // how far from the inner edge to place the player
+        final int padding = 26;
+
+        switch (exitedDir) {
+            case LEFT:
+                // came out the left door of previous room -> spawn near right side of new room
+                playerX = ROOM_X + ROOM_W - padding;
+                playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
+                break;
+            case RIGHT:
+                // came out the right door -> spawn near left side
+                playerX = ROOM_X + padding;
+                playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
+                break;
+            case UP:
+                // came out the top -> spawn near bottom
+                playerX = ROOM_X + (ROOM_W / 2) - (PLAYER_SIZE / 2);
+                playerY = ROOM_Y + ROOM_H - padding;
+                break;
+            case DOWN:
+                // came out the bottom -> spawn near top
+                playerX = ROOM_X + (ROOM_W / 2) - (PLAYER_SIZE / 2);
+                playerY = ROOM_Y + padding;
+                break;
+            default:
+                // fallback: stay roughly where your generator used to put you
+                playerX = ROOM_X + 26;
+                playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
+        }
+
+        // make sure the player is inside the room bounds
+        int minX = ROOM_X + 2;
+        int minY = ROOM_Y + 2;
+        int maxX = ROOM_X + ROOM_W - PLAYER_SIZE - 2;
+        int maxY = ROOM_Y + ROOM_H - PLAYER_SIZE - 2;
+        playerX = clampDouble(playerX, minX, maxX);
+        playerY = clampDouble(playerY, minY, maxY);
+
+        // If the spawn overlaps the door in the new room or an encounter, nudge a bit.
+        // This avoids immediately triggering a new transition or spawning on top of an enemy.
+        Rectangle spawnRect = new Rectangle((int)Math.round(playerX), (int)Math.round(playerY), PLAYER_SIZE, PLAYER_SIZE);
+        Rectangle newDoor = getDoorRect();
+
+        // If spawn intersects the new door, nudge away along the same axis a little.
+        if (spawnRect.intersects(newDoor)) {
+            if (exitedDir == Direction.LEFT || exitedDir == Direction.RIGHT) {
+                // horizontal door -> nudge vertically a bit
+                playerY = clampDouble(playerY + (PLAYER_SIZE + 6), minY, maxY);
+            } else {
+                // vertical door -> nudge horizontally a bit
+                playerX = clampDouble(playerX + (PLAYER_SIZE + 6), minX, maxX);
+            }
+            spawnRect.setLocation((int)Math.round(playerX), (int)Math.round(playerY));
+        }
+
+        // If spawn intersects any encounter, try a few small offsets
+        if (intersectsAnyEncounter(spawnRect)) {
+            int tries = 6;
+            int offset = 18;
+            boolean placed = false;
+            for (int i = 0; i < tries && !placed; i++) {
+                // try offsets in a small cross pattern
+                int dx = ((i % 3) - 1) * offset;
+                int dy = ((i / 3) - 1) * offset;
+                double tryX = clampDouble(playerX + dx, minX, maxX);
+                double tryY = clampDouble(playerY + dy, minY, maxY);
+                Rectangle r = new Rectangle((int)Math.round(tryX), (int)Math.round(tryY), PLAYER_SIZE, PLAYER_SIZE);
+                if (!intersectsAnyEncounter(r) && !r.intersects(newDoor)) {
+                    playerX = tryX;
+                    playerY = tryY;
+                    placed = true;
+                }
+            }
+            // if none of the offsets worked, we leave the clamped spawn — it's probably fine.
+        }
     }
 
     private void setMovementHeld(Direction direction, boolean held) {
