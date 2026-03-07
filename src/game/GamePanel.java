@@ -147,6 +147,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private int playerHealthUnits = MAX_HEALTH_UNITS;
     private TimerStyle selectedTimerStyle = TimerStyle.BACKDROP_HUE;
     private int menuSelectionIndex = MENU_ITEM_START;
+    private Direction doorDirection = Direction.RIGHT;
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -414,11 +415,12 @@ public class GamePanel extends JPanel implements ActionListener {
         }
         int enemyBarY = encounterArenaY + 400;
 
-        g2d.setFont(SMALL_FONT);
+        /*g2d.setFont(SMALL_FONT);
         g2d.setColor(new Color(255, 186, 230, 170));
-        drawCenteredString(g2d, "TARGET", GameConfig.WIDTH / 2, enemyBarY - 10);
+        drawCenteredString(g2d, "TARGET", GameConfig.WIDTH / 2, enemyBarY - 10);*/
 
-        g2d.setColor(new Color(255, 116, 208, 60));
+        //enemy health bar
+        g2d.setColor(new Color(255, 116, 208, 50));
         g2d.fillRect(ENEMY_BAR_X, enemyBarY, ENEMY_BAR_W, ENEMY_BAR_H);
 
         double ratio = Math.max(0.0, Math.min(1.0, enemy.getHealthRatio()));
@@ -436,7 +438,7 @@ public class GamePanel extends JPanel implements ActionListener {
             previewWidth = Math.max(0, Math.min(fillWidth, previewWidth));
             int previewSegmentWidth = fillWidth - previewWidth;
             if (previewSegmentWidth > 0) {
-                g2d.setColor(new Color(255, 196, 232, 64));
+                g2d.setColor(new Color(251, 142, 255, 152));
                 g2d.fillRect(
                         ENEMY_BAR_X + 2 + previewWidth,
                         enemyBarY + 2,
@@ -446,13 +448,13 @@ public class GamePanel extends JPanel implements ActionListener {
             }
         }
 
-        g2d.setColor(WHITE);
+        /*g2d.setColor(WHITE);
         String hpText = enemy.getHealth() + " / " + enemy.getMaxHealth();
         drawCenteredString(g2d, hpText, GameConfig.WIDTH / 2, enemyBarY + ENEMY_BAR_H + 18);
         if (previewDamage > 0) {
             g2d.setColor(new Color(255, 162, 228));
-            drawCenteredString(g2d, "POTENTIAL: -" + previewDamage, GameConfig.WIDTH / 2, enemyBarY + ENEMY_BAR_H + 36);
-        }
+            drawCenteredString(g2d,  "" + previewDamage, GameConfig.WIDTH / 2, enemyBarY + ENEMY_BAR_H + 36);
+        }*/
 
         long now = System.currentTimeMillis();
         if (now < lastHitUntilMs && lastHitDamage > 0) {
@@ -463,14 +465,14 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.setColor(new Color(255, 122, 200, alpha));
             drawCenteredString(g2d, "-" + lastHitDamage, GameConfig.WIDTH / 2, enemyBarY - 18 - yOffset);
         }
-        if (now < lastCoinGainUntilMs && lastCoinGain > 0) {
+        /*if (now < lastCoinGainUntilMs && lastCoinGain > 0) {
             double popProgress = 1.0 - ((lastCoinGainUntilMs - now) / 760.0);
             int yOffset = (int) Math.round(12 * popProgress);
             int alpha = (int) Math.round(255 * (1.0 - popProgress));
             alpha = Math.max(0, Math.min(255, alpha));
             g2d.setColor(new Color(255, 214, 112, alpha));
             drawCenteredString(g2d, "+" + lastCoinGain + " COINS", GameConfig.WIDTH / 2, enemyBarY - 34 - yOffset);
-        }
+        }*/
     }
 
     private void drawSequence(Graphics2D g2d) {
@@ -649,6 +651,10 @@ public class GamePanel extends JPanel implements ActionListener {
         enemyKillEffects.clear();
         backdropEffects.clearHueSweeps();
 
+        //randomize door location
+        Direction[] possibleDoors = { Direction.RIGHT, Direction.UP, Direction.DOWN };
+        doorDirection = possibleDoors[random.nextInt(possibleDoors.length)];
+
         playerX = ROOM_X + 26;
         playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
 
@@ -793,9 +799,9 @@ public class GamePanel extends JPanel implements ActionListener {
             coinCount += coinReward;
             lastCoinGain = coinReward;
             lastCoinGainUntilMs = System.currentTimeMillis() + 760L;
-            if (!enemyDefeated) {
+            /*if (!enemyDefeated) {
                 AudioManager.playSfx("coin_collect.wav");
-            }
+            }*/
         }
         if (enemyDefeated) {
             spawnEnemyDefeatEffect(currentNode);
@@ -906,9 +912,26 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private Rectangle getDoorRect() {
-        int x = ROOM_X + ROOM_W - DOOR_W;
-        int y = ROOM_Y + (ROOM_H - DOOR_H) / 2;
-        return new Rectangle(x, y, DOOR_W, DOOR_H);
+        int x;
+        int y;
+
+        switch (doorDirection) {
+            case UP:
+                x = ROOM_X + (ROOM_W - DOOR_H) / 2;
+                y = ROOM_Y;
+                return new Rectangle(x, y, DOOR_H, DOOR_W);
+
+            case DOWN:
+                x = ROOM_X + (ROOM_W - DOOR_H) / 2;
+                y = ROOM_Y + ROOM_H - DOOR_W;
+                return new Rectangle(x, y, DOOR_H, DOOR_W);
+
+            case RIGHT:
+            default:
+                x = ROOM_X + ROOM_W - DOOR_W;
+                y = ROOM_Y + (ROOM_H - DOOR_H) / 2;
+                return new Rectangle(x, y, DOOR_W, DOOR_H);
+        }
     }
 
     private double clampDouble(double value, double min, double max) {
