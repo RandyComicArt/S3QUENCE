@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="com.obiscr.chatgpt.settings.EasyCodeState">
+    <option name="projectFiles" value="$PROJECT_DIR$/src/game/audio/AudioManager.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/config/GameConfig.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/logic/DamageCalculator.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/logic/RoundCompletion.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/logic/RoundManager.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/model/Direction.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/model/EncounterEnemy.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/model/EncounterNode.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/model/ScreenState.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/model/TimerStyle.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/visual/BackdropEffects.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/visual/EnemyKillEffects.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/GamePanel.java;/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/Main.java" />
+  </component>
+</project>

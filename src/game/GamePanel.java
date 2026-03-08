@@ -87,6 +87,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final long ENCOUNTER_TRANSITION_MS = 720L;
     private static final long ENCOUNTER_TRANSITION_HOLD_MS = 180L;
     private static final long ENCOUNTER_INTRO_MS = 360L;
+    private static final long ROOM_TRANSITION_MS = 720L;
+    private static final long ROOM_TRANSITION_HOLD_MS = 180L;
+    private static final long ROOM_INTRO_MS = 360L;
     private static final long RUN_START_FADE_IN_MS = 1000L;
     private static final long MENU_TRANSITION_MS = 520L;
     private static final long MENU_TRANSITION_SWITCH_MS = MENU_TRANSITION_MS / 2;
@@ -127,6 +130,11 @@ public class GamePanel extends JPanel implements ActionListener {
     private long encounterTransitionStartMs;
     private boolean encounterIntroActive;
     private long encounterIntroStartMs;
+    private boolean roomTransitionActive;
+    private long roomTransitionStartMs;
+    private boolean roomIntroActive;
+    private long roomIntroStartMs;
+    private Direction pendingRoomEntryDirection;
     private boolean moveUpHeld;
     private boolean moveDownHeld;
     private boolean moveLeftHeld;
@@ -224,6 +232,10 @@ public class GamePanel extends JPanel implements ActionListener {
             drawEncounterTransition(gameG);
         } else if (encounterIntroActive) {
             drawEncounterIntro(gameG);
+        } else if (roomTransitionActive) {
+            drawRoomTransition(gameG);
+        } else if (roomIntroActive) {
+            drawRoomIntro(gameG);
         }
         if (runStartFadeInActive) {
             drawRunStartFadeIn(gameG);
@@ -248,7 +260,7 @@ public class GamePanel extends JPanel implements ActionListener {
         if (menuTransitionActive) {
             updateMenuTransition();
         } else {
-            if (screen == ScreenState.DUNGEON && !encounterTransitionActive) {
+            if (screen == ScreenState.DUNGEON && !encounterTransitionActive && !roomTransitionActive && !roomIntroActive) {
                 updateDungeonMovement(deltaSeconds);
             }
             if (encounterTransitionActive) {
@@ -264,10 +276,25 @@ public class GamePanel extends JPanel implements ActionListener {
                     encounterIntroStartMs = System.currentTimeMillis();
                 }
             }
+            if (roomTransitionActive) {
+                long elapsedMs = System.currentTimeMillis() - roomTransitionStartMs;
+                if (elapsedMs >= ROOM_TRANSITION_MS + ROOM_TRANSITION_HOLD_MS) {
+                    roomTransitionActive = false;
+                    completeRoomTransition();
+                    roomIntroActive = true;
+                    roomIntroStartMs = System.currentTimeMillis();
+                }
+            }
             if (encounterIntroActive) {
                 long introElapsedMs = System.currentTimeMillis() - encounterIntroStartMs;
                 if (introElapsedMs >= ENCOUNTER_INTRO_MS) {
                     encounterIntroActive = false;
+                }
+            }
+            if (roomIntroActive) {
+                long introElapsedMs = System.currentTimeMillis() - roomIntroStartMs;
+                if (introElapsedMs >= ROOM_INTRO_MS) {
+                    roomIntroActive = false;
                 }
             }
             if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && roundManager.hasTimedOut()) {
@@ -606,7 +633,11 @@ public class GamePanel extends JPanel implements ActionListener {
             public boolean dispatchKeyEvent(KeyEvent e) {
                 int id = e.getID();
                 if (id == KeyEvent.KEY_PRESSED) {
-                    if (screen == ScreenState.DUNGEON && !encounterTransitionActive && !menuTransitionActive) {
+                    if (screen == ScreenState.DUNGEON
+                            && !encounterTransitionActive
+                            && !roomTransitionActive
+                            && !roomIntroActive
+                            && !menuTransitionActive) {
                         setMovementFromKeyCode(e.getKeyCode(), true);
                     }
                 } else if (id == KeyEvent.KEY_RELEASED) {
@@ -629,6 +660,9 @@ public class GamePanel extends JPanel implements ActionListener {
         encounterTransitionActive = false;
         pendingEncounterIndex = -1;
         encounterIntroActive = false;
+        roomTransitionActive = false;
+        roomIntroActive = false;
+        pendingRoomEntryDirection = null;
         runStartFadeInActive = true;
         runStartFadeInStartMs = System.currentTimeMillis();
         enemyKillEffects.clear();
@@ -646,6 +680,9 @@ public class GamePanel extends JPanel implements ActionListener {
         menuTransitionActive = false;
         encounterTransitionActive = false;
         encounterIntroActive = false;
+        roomTransitionActive = false;
+        roomIntroActive = false;
+        pendingRoomEntryDirection = null;
         lastHitDamage = 0;
         lastHitUntilMs = 0;
         enemyKillEffects.clear();
@@ -750,93 +787,7 @@ public class GamePanel extends JPanel implements ActionListener {
                 }
             }
         } else if (playerRect.intersects(getDoorRect())) {
-            // remember which door we used in the current room before regenerating the next room
-            Direction exitedDir = doorDirection;
-
-            roomNumber++;
-            AudioManager.playSfx("next_room.wav");
-
-            // generate (possibly random) next room
-            generateRoom();
-
-            // prevent immediate 180° flip: re-generate if the new door is the opposite of exitedDir
-            Direction forbid;
-            switch (exitedDir) {
-                case LEFT:  forbid = Direction.RIGHT; break;
-                case RIGHT: forbid = Direction.LEFT;  break;
-                case UP:    forbid = Direction.DOWN;  break;
-                case DOWN:  forbid = Direction.UP;    break;
-                default:    forbid = null;             break;
-            }
-
-            int safety = 0;
-            while (forbid != null && doorDirection == forbid && safety++ < 8) {
-                // re-roll the room (keeps generation logic centralized)
-                generateRoom();
-            }
-
-            // Now place player just inside the new room on the side corresponding to the door they came through
-            final int padding = 26;
-            switch (exitedDir) {
-                case LEFT:
-                    // player came out the left door of previous room -> spawn near right edge of new room
-                    playerX = ROOM_X + ROOM_W - padding;
-                    playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
-                    break;
-                case RIGHT:
-                    playerX = ROOM_X + padding;
-                    playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
-                    break;
-                case UP:
-                    playerX = ROOM_X + (ROOM_W / 2) - (PLAYER_SIZE / 2);
-                    playerY = ROOM_Y + ROOM_H - padding;
-                    break;
-                case DOWN:
-                    playerX = ROOM_X + (ROOM_W / 2) - (PLAYER_SIZE / 2);
-                    playerY = ROOM_Y + padding;
-                    break;
-                default:
-                    playerX = ROOM_X + 26;
-                    playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
-            }
-
-            // clamp inside room
-            playerX = clampDouble(playerX, minX, maxX);
-            playerY = clampDouble(playerY, minY, maxY);
-
-            // avoid spawning directly overlapping the door or an encounter
-            Rectangle spawnRect = new Rectangle((int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, PLAYER_SIZE);
-            Rectangle newDoor = getDoorRect();
-
-            if (spawnRect.intersects(newDoor)) {
-                // nudge a bit away along the perpendicular axis
-                if (exitedDir == Direction.LEFT || exitedDir == Direction.RIGHT) {
-                    playerY = clampDouble(playerY + (PLAYER_SIZE + 6), minY, maxY);
-                } else {
-                    playerX = clampDouble(playerX + (PLAYER_SIZE + 6), minX, maxX);
-                }
-                spawnRect.setLocation((int) Math.round(playerX), (int) Math.round(playerY));
-            }
-
-            if (intersectsAnyEncounter(spawnRect)) {
-                // try a few small offsets in case of overlap
-                int tries = 6;
-                int offset = 18;
-                boolean placed = false;
-                for (int i = 0; i < tries && !placed; i++) {
-                    int dxOffset = ((i % 3) - 1) * offset;
-                    int dyOffset = ((i / 3) - 1) * offset;
-                    double tryX = clampDouble(playerX + dxOffset, minX, maxX);
-                    double tryY = clampDouble(playerY + dyOffset, minY, maxY);
-                    Rectangle r = new Rectangle((int) Math.round(tryX), (int) Math.round(tryY), PLAYER_SIZE, PLAYER_SIZE);
-                    if (!r.intersects(newDoor) && !intersectsAnyEncounter(r)) {
-                        playerX = tryX;
-                        playerY = tryY;
-                        placed = true;
-                    }
-                }
-                // if none of the offsets worked, we leave the clamped spawn — it's probably OK.
-            }
+            startRoomTransition(doorDirection);
         }
     }
 
@@ -849,6 +800,43 @@ public class GamePanel extends JPanel implements ActionListener {
         pendingEncounterIndex = encounterIndex;
         encounterTransitionActive = true;
         encounterTransitionStartMs = System.currentTimeMillis();
+    }
+
+    private void startRoomTransition(Direction exitedDir) {
+        clearMovementInput();
+        backdropEffects.clearHueSweeps();
+        roomTransitionActive = true;
+        roomTransitionStartMs = System.currentTimeMillis();
+        roomIntroActive = false;
+        pendingRoomEntryDirection = exitedDir;
+        AudioManager.playSfx("next_room.wav");
+    }
+
+    private void completeRoomTransition() {
+        Direction exitedDir = pendingRoomEntryDirection;
+        pendingRoomEntryDirection = null;
+        if (exitedDir == null) {
+            return;
+        }
+
+        roomNumber++;
+        generateRoom();
+
+        Direction forbid;
+        switch (exitedDir) {
+            case LEFT:  forbid = Direction.RIGHT; break;
+            case RIGHT: forbid = Direction.LEFT;  break;
+            case UP:    forbid = Direction.DOWN;  break;
+            case DOWN:  forbid = Direction.UP;    break;
+            default:    forbid = null;            break;
+        }
+
+        int safety = 0;
+        while (forbid != null && doorDirection == forbid && safety++ < 8) {
+            generateRoom();
+        }
+
+        positionPlayerFromEntry(exitedDir);
     }
 
     private void handleEncounterInput(int symbol) {
@@ -1409,13 +1397,38 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawEncounterTransition(Graphics2D g2d) {
-        long elapsedMs = System.currentTimeMillis() - encounterTransitionStartMs;
-        double progress = elapsedMs / (double) ENCOUNTER_TRANSITION_MS;
+        drawHorizontalShutterTransition(
+                g2d,
+                encounterTransitionStartMs,
+                ENCOUNTER_TRANSITION_MS,
+                ENCOUNTER_TRANSITION_HOLD_MS,
+                "ENCOUNTER"
+        );
+    }
+
+    private void drawRoomTransition(Graphics2D g2d) {
+        drawHorizontalShutterTransition(
+                g2d,
+                roomTransitionStartMs,
+                ROOM_TRANSITION_MS,
+                ROOM_TRANSITION_HOLD_MS,
+                "NEXT ROOM"
+        );
+    }
+
+    private void drawHorizontalShutterTransition(
+            Graphics2D g2d,
+            long startMs,
+            long transitionMs,
+            long holdMs,
+            String text
+    ) {
+        long elapsedMs = System.currentTimeMillis() - startMs;
+        double progress = elapsedMs / (double) transitionMs;
         progress = Math.max(0.0, Math.min(1.0, progress));
-        double totalProgress = elapsedMs / (double) (ENCOUNTER_TRANSITION_MS + ENCOUNTER_TRANSITION_HOLD_MS);
+        double totalProgress = elapsedMs / (double) (transitionMs + holdMs);
         totalProgress = Math.max(0.0, Math.min(1.0, totalProgress));
 
-        // Fast at start, then slows as shutters approach the encounter banner.
         double eased = 1.0 - Math.pow(1.0 - progress, 3.0);
         int centerY = GameConfig.HEIGHT / 2;
         g2d.setFont(HUD_FONT);
@@ -1433,7 +1446,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setColor(BG);
         g2d.fillRect(0, 0, GameConfig.WIDTH, topLineY);
         g2d.fillRect(0, bottomLineY, GameConfig.WIDTH, GameConfig.HEIGHT - bottomLineY);
-        // Keep the center gap opaque during transition so the dungeon scene never bleeds through.
         int centerBandY = Math.max(0, topLineY + 1);
         int centerBandHeight = Math.max(0, bottomLineY - topLineY - 1);
         if (centerBandHeight > 0) {
@@ -1444,7 +1456,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.drawLine(0, topLineY, GameConfig.WIDTH, topLineY);
         g2d.drawLine(0, bottomLineY, GameConfig.WIDTH, bottomLineY);
 
-        String text = "ENCOUNTER";
         int textWidth = metrics.stringWidth(text);
         int centerX = GameConfig.WIDTH / 2;
         int startCenterX = GameConfig.WIDTH + (textWidth / 2) + 40;
@@ -1455,7 +1466,6 @@ public class GamePanel extends JPanel implements ActionListener {
         if (totalProgress < 0.78) {
             double enterProgress = Math.max(0.0, Math.min(1.0, (totalProgress - 0.12) / 0.66));
             double easeOut = 1.0 - Math.pow(1.0 - enterProgress, 3.0);
-            // Keep residual velocity near the center by mixing linear movement.
             double textEased = (0.68 * easeOut) + (0.32 * enterProgress);
             textCenterX = (int) Math.round(startCenterX + ((centerX - startCenterX) * textEased));
             textAlpha = (int) Math.round(255 * enterProgress);
@@ -1477,7 +1487,15 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawEncounterIntro(Graphics2D g2d) {
-        double progress = (System.currentTimeMillis() - encounterIntroStartMs) / (double) ENCOUNTER_INTRO_MS;
+        drawTransitionIntro(g2d, encounterIntroStartMs, ENCOUNTER_INTRO_MS, "ENCOUNTER");
+    }
+
+    private void drawRoomIntro(Graphics2D g2d) {
+        drawTransitionIntro(g2d, roomIntroStartMs, ROOM_INTRO_MS, "NEXT ROOM");
+    }
+
+    private void drawTransitionIntro(Graphics2D g2d, long startMs, long introMs, String text) {
+        double progress = (System.currentTimeMillis() - startMs) / (double) introMs;
         progress = Math.max(0.0, Math.min(1.0, progress));
 
         int overlayAlpha = (int) Math.round(255 * (1.0 - progress));
@@ -1486,7 +1504,6 @@ public class GamePanel extends JPanel implements ActionListener {
 
         g2d.setFont(HUD_FONT);
         FontMetrics metrics = g2d.getFontMetrics();
-        String text = "ENCOUNTER";
         int textWidth = metrics.stringWidth(text);
         int centerY = GameConfig.HEIGHT / 2;
         int textTopY = centerY - (metrics.getHeight() / 2);
@@ -1538,6 +1555,9 @@ public class GamePanel extends JPanel implements ActionListener {
         encounterTransitionActive = false;
         pendingEncounterIndex = -1;
         encounterIntroActive = false;
+        roomTransitionActive = false;
+        roomIntroActive = false;
+        pendingRoomEntryDirection = null;
         runStartFadeInActive = false;
         menuTransitionActive = true;
         menuTransitionStartMs = System.currentTimeMillis();
