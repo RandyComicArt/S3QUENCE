@@ -652,7 +652,7 @@ public class GamePanel extends JPanel implements ActionListener {
         backdropEffects.clearHueSweeps();
 
         //randomize door location
-        Direction[] possibleDoors = { Direction.RIGHT, Direction.UP, Direction.DOWN };
+        Direction[] possibleDoors = { Direction.RIGHT, Direction.UP, Direction.DOWN, Direction.LEFT };
         doorDirection = possibleDoors[random.nextInt(possibleDoors.length)];
 
         playerX = ROOM_X + 26;
@@ -1010,6 +1010,11 @@ public class GamePanel extends JPanel implements ActionListener {
                 x = ROOM_X + (ROOM_W - DOOR_H) / 2;
                 y = ROOM_Y + ROOM_H - DOOR_W;
                 return new Rectangle(x, y, DOOR_H, DOOR_W);
+
+            case LEFT:
+                x = ROOM_X;
+                y = ROOM_Y + (ROOM_H - DOOR_H) / 2;
+                return new Rectangle(x, y, DOOR_W, DOOR_H);
 
             case RIGHT:
             default:
