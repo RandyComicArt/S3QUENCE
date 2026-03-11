@@ -134,7 +134,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final double CRT_VERTICAL_CURVE_STRENGTH = 0.04;
     private static final int CRT_WARP_STRIP_PX = 2;
     private static final boolean DEFAULT_CRT_COLOR_BLEED = true;
-    private static final int DEFAULT_RENDER_QUALITY_INDEX = 0;
+    private static final int DEFAULT_RENDER_QUALITY_INDEX = 1;
     private static final int DEFAULT_BRIGHTNESS_INDEX = 12;
     private static final int CRT_BLEED_OFFSET_X = 2;
     private static final int CRT_BLEED_OFFSET_Y = 1;
@@ -2429,7 +2429,7 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setColor(new Color(0, 0, 0, 150));
         g2d.fill(outer);
 
-        g2d.setColor(new Color(170, 240, 255, 22));
+        g2d.setColor(new Color(170, 240, 255, 0));
         g2d.draw(new RoundRectangle2D.Double(2, 2, width - 5.0, height - 5.0, arc, arc));
     }
 
