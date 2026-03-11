@@ -2,6 +2,7 @@ package game.logic;
 
 import game.config.GameConfig;
 import game.model.Direction;
+import game.model.EnemyArchetype;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,13 +26,34 @@ public class RoundManager {
     private long sequenceCompleteHoldUntilMs;
     private long heldTimeLeftMs;
     private long pendingTimeRestoreMs;
+    private EnemyArchetype activeArchetype = EnemyArchetype.NORMAL;
+    private int minSequenceLength = GameConfig.MIN_SEQUENCE_LENGTH;
+    private int maxSequenceLength = GameConfig.MAX_SEQUENCE_LENGTH;
+    private long encounterTimerBaseMs = GameConfig.ENCOUNTER_MAX_TIME_MS;
+    private long sequenceRevealWindowMs = -1L;
 
     public void startGame(boolean resetScore) {
+        startGame(resetScore, 0L);
+    }
+
+    public void configureEncounter(EnemyArchetype archetype) {
+        activeArchetype = archetype == null ? EnemyArchetype.NORMAL : archetype;
+        minSequenceLength = activeArchetype.getMinSequenceLength();
+        maxSequenceLength = activeArchetype.getMaxSequenceLength();
+        encounterTimerBaseMs = Math.max(
+                1000L,
+                Math.round(GameConfig.ENCOUNTER_MAX_TIME_MS * activeArchetype.getTimerMultiplier())
+        );
+        sequenceRevealWindowMs = activeArchetype.getRevealWindowMs();
+    }
+
+    public void startGame(boolean resetScore, long bonusTimeMs) {
         if (resetScore) {
             roundsCleared = 0;
         }
-        timerMaxMs = Math.max(1L, GameConfig.ENCOUNTER_MAX_TIME_MS);
-        timerRemainingMs = Math.min(timerMaxMs, Math.max(0L, GameConfig.ENCOUNTER_START_TIME_MS));
+        long configuredStart = Math.max(0L, encounterTimerBaseMs + bonusTimeMs);
+        timerMaxMs = Math.max(1L, configuredStart);
+        timerRemainingMs = timerMaxMs;
         lastTimerUpdateMs = System.currentTimeMillis();
         startNewSequence();
     }
@@ -43,12 +65,17 @@ public class RoundManager {
             return null;
         }
 
-        if (sequence.get(progressIndex) == input) {
+        int expectedIndex = activeArchetype.isReverseInput()
+                ? (sequence.size() - 1 - progressIndex)
+                : progressIndex;
+        if (sequence.get(expectedIndex) == input) {
             long cadenceReferenceMs = lastCorrectInputTimeMs > 0L ? lastCorrectInputTimeMs : sequenceStartTimeMs;
             long cadenceMs = Math.max(0L, now - cadenceReferenceMs);
             int increment = DamageCalculator.calculatePotentialIncrement(sequence.size(), progressIndex, cadenceMs);
             pendingDamage += increment;
-            timerRemainingMs = Math.min(timerMaxMs, timerRemainingMs + GameConfig.TIME_RESTORE_PER_CORRECT_KEY_MS);
+            if (activeArchetype.isTimeRecoveryEnabled()) {
+                timerRemainingMs = Math.min(timerMaxMs, timerRemainingMs + GameConfig.TIME_RESTORE_PER_CORRECT_KEY_MS);
+            }
 
             lastCorrectInputTimeMs = now;
 
@@ -82,12 +109,35 @@ public class RoundManager {
         wrongFlashUntilMs = now + GameConfig.WRONG_FLASH_MS;
         progressIndex = 0;
         clearComboState();
+        if (sequenceRevealWindowMs > 0L) {
+            sequenceStartTimeMs = now;
+        }
         return null;
     }
 
     public List<Integer> getSequence() {
         updateRuntimeState();
         return Collections.unmodifiableList(sequence);
+    }
+
+    public EnemyArchetype getActiveArchetype() {
+        return activeArchetype;
+    }
+
+    public boolean shouldHideSequence() {
+        updateRuntimeState();
+        return sequenceRevealWindowMs > 0L
+                && !sequenceCompleteHoldActive
+                && System.currentTimeMillis() - sequenceStartTimeMs >= sequenceRevealWindowMs;
+    }
+
+    public int getVisibleSequenceCount() {
+        updateRuntimeState();
+        if (!activeArchetype.isProgressiveReveal()) {
+            return sequence.size();
+        }
+        int visibleCount = activeArchetype.getInitialVisibleCount() + progressIndex;
+        return Math.max(0, Math.min(sequence.size(), visibleCount));
     }
 
     public int getProgressIndex() {
@@ -102,7 +152,9 @@ public class RoundManager {
     public long getTimeLeftMs() {
         updateRuntimeState();
         if (sequenceCompleteHoldActive) {
-            long displayed = heldTimeLeftMs + pendingTimeRestoreMs;
+            long displayed = activeArchetype.isTimeRecoveryEnabled()
+                    ? heldTimeLeftMs + pendingTimeRestoreMs
+                    : heldTimeLeftMs;
             return Math.max(1L, Math.min(timerMaxMs, displayed));
         }
         return Math.max(0L, timerRemainingMs);
@@ -133,9 +185,7 @@ public class RoundManager {
 
     private void startNewSequence() {
         sequence.clear();
-        int sequenceLength = random.nextInt(
-                GameConfig.MAX_SEQUENCE_LENGTH - GameConfig.MIN_SEQUENCE_LENGTH + 1
-        ) + GameConfig.MIN_SEQUENCE_LENGTH;
+        int sequenceLength = random.nextInt(maxSequenceLength - minSequenceLength + 1) + minSequenceLength;
 
         for (int i = 0; i < sequenceLength; i++) {
             sequence.add(random.nextInt(Direction.values().length));
@@ -169,7 +219,7 @@ public class RoundManager {
         }
         long elapsedMs = Math.max(0L, now - lastTimerUpdateMs);
         lastTimerUpdateMs = now;
-        if (elapsedMs <= 0L || sequenceCompleteHoldActive) {
+        if (elapsedMs <= 0L || sequenceCompleteHoldActive || now < wrongFlashUntilMs) {
             return;
         }
         timerRemainingMs = Math.max(0L, timerRemainingMs - elapsedMs);
@@ -183,7 +233,9 @@ public class RoundManager {
             return;
         }
 
-        timerRemainingMs = Math.min(timerMaxMs, timerRemainingMs + pendingTimeRestoreMs);
+        if (activeArchetype.isTimeRecoveryEnabled()) {
+            timerRemainingMs = Math.min(timerMaxMs, timerRemainingMs + pendingTimeRestoreMs);
+        }
         pendingTimeRestoreMs = 0L;
         sequenceCompleteHoldActive = false;
         sequenceCompleteHoldUntilMs = 0L;

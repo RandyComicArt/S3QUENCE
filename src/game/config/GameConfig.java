@@ -9,6 +9,7 @@ public final class GameConfig {
 
     public static final long ENCOUNTER_START_TIME_MS = 5600L;
     public static final long ENCOUNTER_MAX_TIME_MS = 5600L;
+    public static final long SHOP_TIMER_BONUS_MS = 1200L;
     public static final long TIME_RESTORE_PER_CORRECT_KEY_MS = 150L;
     public static final long TIME_RESTORE_BASE_MS = 170L;
     public static final long TIME_RESTORE_PER_SYMBOL_MS = 55L;

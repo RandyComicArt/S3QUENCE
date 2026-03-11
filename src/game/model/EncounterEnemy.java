@@ -2,10 +2,12 @@ package game.model;
 
 public class EncounterEnemy {
     private final int maxHealth;
+    private final EnemyArchetype archetype;
     private int health;
 
-    public EncounterEnemy(int maxHealth) {
+    public EncounterEnemy(int maxHealth, EnemyArchetype archetype) {
         this.maxHealth = Math.max(1, maxHealth);
+        this.archetype = archetype == null ? EnemyArchetype.NORMAL : archetype;
         this.health = this.maxHealth;
     }
 
@@ -15,6 +17,10 @@ public class EncounterEnemy {
 
     public int getHealth() {
         return health;
+    }
+
+    public EnemyArchetype getArchetype() {
+        return archetype;
     }
 
     public boolean isDefeated() {

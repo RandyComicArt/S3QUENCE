@@ -5,10 +5,11 @@ import game.config.GameConfig;
 import game.logic.RoundCompletion;
 import game.logic.RoundManager;
 import game.model.Direction;
+import game.model.EnemyArchetype;
 import game.model.EncounterEnemy;
 import game.model.EncounterNode;
 import game.model.ScreenState;
-import game.model.TimerStyle;
+import game.model.ShopOption;
 import game.visual.BackdropEffects;
 import game.visual.EnemyKillEffects;
 
@@ -31,12 +32,16 @@ import java.awt.Graphics2D;
 import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
 import java.awt.Rectangle;
+import java.awt.RadialGradientPaint;
 import java.awt.RenderingHints;
 import java.awt.Stroke;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
+import java.awt.image.RescaleOp;
+import java.awt.geom.Area;
+import java.awt.geom.RoundRectangle2D;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
@@ -65,6 +70,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final Font HUD_FONT = new Font("Monospaced", Font.BOLD, 24);
     private static final Font BODY_FONT = new Font("Monospaced", Font.PLAIN, 20);
     private static final Font SMALL_FONT = new Font("Monospaced", Font.PLAIN, 16);
+    private static final Font TRANSITION_ENEMY_FONT = new Font("Monospaced", Font.BOLD, 36);
 
     private static final int ARENA_X = 120;
     private static final int ARENA_Y = 170;
@@ -84,8 +90,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int PLAYER_SIZE = 18;
     private static final double PLAYER_SPEED_PER_SECOND = 280.0;
     private static final int ENCOUNTER_SIZE = 18;
-    private static final long ENCOUNTER_TRANSITION_MS = 720L;
-    private static final long ENCOUNTER_TRANSITION_HOLD_MS = 180L;
+    private static final long ENCOUNTER_TRANSITION_MS = 1280L;
+    private static final long ENCOUNTER_TRANSITION_HOLD_MS = 360L;
     private static final long ENCOUNTER_INTRO_MS = 360L;
     private static final long ROOM_TRANSITION_MS = 720L;
     private static final long ROOM_TRANSITION_HOLD_MS = 180L;
@@ -96,8 +102,16 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
     private static final double TIMER_REFILL_ANIM_PER_SECOND = 3600.0;
     private static final int MENU_ITEM_START = 0;
-    private static final int MENU_ITEM_TIMER_STYLE = 1;
-    private static final int MENU_ITEM_COUNT = 2;
+    private static final int MENU_ITEM_TEST_ENEMY = 1;
+    private static final int MENU_ITEM_SETTINGS = 2;
+    private static final int MENU_ITEM_COUNT = 3;
+    private static final int SETTINGS_ITEM_RENDER_QUALITY = 0;
+    private static final int SETTINGS_ITEM_CRT_BLEED = 1;
+    private static final int SETTINGS_ITEM_CRT_BRIGHTNESS = 2;
+    private static final int SETTINGS_ITEM_ASPECT = 3;
+    private static final int SETTINGS_ITEM_BACK = 4;
+    private static final int SETTINGS_ITEM_COUNT = 5;
+    private static final int SHOP_ITEM_COUNT = 3;
     private static final int MAX_HEARTS = 3;
     private static final int MAX_HEALTH_UNITS = MAX_HEARTS * 2;
     private static final int HEART_GAP = 22;
@@ -106,6 +120,40 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final float HEART_BG_ALPHA = 0.28f;
     private static final int SEQUENCE_SYMBOL_SIZE = 76;
     private static final int SEQUENCE_SYMBOL_GAP = 24;
+    private static final int[] RENDER_QUALITY_WIDTHS = {480, 560, 640};
+    private static final int[] RENDER_QUALITY_HEIGHTS = {360, 420, 480};
+    private static final String[] RENDER_QUALITY_LABELS = {"PERFORMANCE", "BALANCED", "CLARITY"};
+    private static final String[] ASPECT_MODE_LABELS = {"ORIGINAL", "FILL"};
+    private static final float[] CRT_BRIGHTNESS_LEVELS = {
+            0.50f, 0.60f, 0.70f, 0.80f, 0.90f,
+            1.00f, 1.10f, 1.20f, 1.30f, 1.40f,
+            1.50f, 1.60f, 1.70f, 1.80f, 1.90f,
+            2.00f, 2.10f
+    };
+    private static final double CRT_WARP_STRENGTH = 0.085;
+    private static final double CRT_VERTICAL_CURVE_STRENGTH = 0.04;
+    private static final int CRT_WARP_STRIP_PX = 2;
+    private static final boolean DEFAULT_CRT_COLOR_BLEED = true;
+    private static final int DEFAULT_RENDER_QUALITY_INDEX = 0;
+    private static final int DEFAULT_BRIGHTNESS_INDEX = 12;
+    private static final int CRT_BLEED_OFFSET_X = 2;
+    private static final int CRT_BLEED_OFFSET_Y = 1;
+    private static final float CRT_BLEED_INTENSITY = 0.32f;
+    private static final RescaleOp CRT_BLEED_RED_OP = new RescaleOp(
+            new float[]{1f, 0f, 0f, 1f},
+            new float[]{0f, 0f, 0f, 0f},
+            null
+    );
+    private static final RescaleOp CRT_BLEED_GREEN_OP = new RescaleOp(
+            new float[]{0f, 1f, 0f, 1f},
+            new float[]{0f, 0f, 0f, 0f},
+            null
+    );
+    private static final RescaleOp CRT_BLEED_BLUE_OP = new RescaleOp(
+            new float[]{0f, 0f, 1f, 1f},
+            new float[]{0f, 0f, 0f, 0f},
+            null
+    );
 
     private final Timer timer;
     private final RoundManager roundManager = new RoundManager();
@@ -116,6 +164,18 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage fullHeartSprite;
     private BufferedImage halfHeartSprite;
     private BufferedImage emptyHeartSprite;
+    private BufferedImage megamanTransitionSprite;
+    private BufferedImage sceneBuffer;
+    private BufferedImage crtWarpBuffer;
+    private BufferedImage crtOverlayBuffer;
+    private BufferedImage crtMatteBuffer;
+    private BufferedImage crtBleedBuffer;
+    private BufferedImage crtBrightnessBuffer;
+    private RescaleOp crtBrightnessOp;
+    private int[] crtRowXs;
+    private int[] crtRowWidths;
+    private int[] crtColTops;
+    private int[] crtColBottoms;
 
     private final Random random = new Random();
     private final List<EncounterNode> roomEncounters = new ArrayList<>();
@@ -153,9 +213,22 @@ public class GamePanel extends JPanel implements ActionListener {
     private long displayedTimerMs = -1L;
     private long displayedTimerDurationMs = 1L;
     private int playerHealthUnits = MAX_HEALTH_UNITS;
-    private TimerStyle selectedTimerStyle = TimerStyle.BACKDROP_HUE;
     private int menuSelectionIndex = MENU_ITEM_START;
+    private int settingsSelectionIndex = SETTINGS_ITEM_RENDER_QUALITY;
+    private int shopSelectionIndex;
+    private long mistakeGuardCharges;
+    private long nextEncounterTimeBonusMs;
+    private EnemyArchetype forcedTestEnemy;
     private Direction doorDirection = Direction.RIGHT;
+    private int sceneBufferWidth = RENDER_QUALITY_WIDTHS[DEFAULT_RENDER_QUALITY_INDEX];
+    private int sceneBufferHeight = RENDER_QUALITY_HEIGHTS[DEFAULT_RENDER_QUALITY_INDEX];
+    private int renderQualityIndex = DEFAULT_RENDER_QUALITY_INDEX;
+    private boolean crtBleedEnabled = DEFAULT_CRT_COLOR_BLEED;
+    private boolean crtScanlinesEnabled = true;
+    private int crtBrightnessIndex = DEFAULT_BRIGHTNESS_INDEX;
+    private float crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[DEFAULT_BRIGHTNESS_INDEX];
+    private float lastCrtBrightnessGain = -1f;
+    private int aspectModeIndex = 0;
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -163,6 +236,7 @@ public class GamePanel extends JPanel implements ActionListener {
         setFocusable(true);
         loadArrowSprites();
         loadHeartSprites();
+        loadTransitionSprites();
         setupMovementDispatcher();
         setupKeyBindings();
         updateBackgroundMusic();
@@ -186,43 +260,80 @@ public class GamePanel extends JPanel implements ActionListener {
 
         int gameWidth = GameConfig.WIDTH;
         int gameHeight = GameConfig.HEIGHT;
+        boolean fillScreen = aspectModeIndex == 1;
         double scale = Math.min(panelWidth / (double) gameWidth, panelHeight / (double) gameHeight);
 
-        int renderWidth = (int) Math.round(gameWidth * scale);
-        int renderHeight = (int) Math.round(gameHeight * scale);
-        int renderX = (panelWidth - renderWidth) / 2;
-        int renderY = (panelHeight - renderHeight) / 2;
+        int renderWidth = fillScreen ? panelWidth : (int) Math.round(gameWidth * scale);
+        int renderHeight = fillScreen ? panelHeight : (int) Math.round(gameHeight * scale);
+        int renderX = fillScreen ? 0 : (panelWidth - renderWidth) / 2;
+        int renderY = fillScreen ? 0 : (panelHeight - renderHeight) / 2;
 
-        drawLetterboxFrame(g2d, panelWidth, panelHeight, renderX, renderY, renderWidth, renderHeight);
+        if (!fillScreen) {
+            drawLetterboxFrame(g2d, panelWidth, panelHeight, renderX, renderY, renderWidth, renderHeight);
+        }
 
         Graphics2D gameG = (Graphics2D) g2d.create(renderX, renderY, renderWidth, renderHeight);
-        gameG.scale(renderWidth / (double) gameWidth, renderHeight / (double) gameHeight);
         gameG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
         gameG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
         gameG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 
+        if (sceneBuffer == null || sceneBuffer.getWidth() != sceneBufferWidth || sceneBuffer.getHeight() != sceneBufferHeight) {
+            sceneBuffer = new BufferedImage(sceneBufferWidth, sceneBufferHeight, BufferedImage.TYPE_INT_ARGB);
+        }
+
+        Graphics2D sceneG = sceneBuffer.createGraphics();
+        sceneG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        sceneG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+        sceneG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        sceneG.setColor(BG);
+        sceneG.fillRect(0, 0, sceneBufferWidth, sceneBufferHeight);
+        sceneG.scale(sceneBufferWidth / (double) gameWidth, sceneBufferHeight / (double) gameHeight);
+        renderGameScene(sceneG);
+        sceneG.dispose();
+
+        ensureCrtGeometry(renderWidth, renderHeight);
+        drawCurvedScreenImage(gameG, sceneBuffer, renderWidth, renderHeight);
+        applyCrtOverlay(gameG, renderWidth, renderHeight);
+        drawCurvedScreenMatte(gameG, renderWidth, renderHeight);
+
+        gameG.dispose();
+        g2d.dispose();
+    }
+
+    private void renderGameScene(Graphics2D gameG) {
+        int gameWidth = GameConfig.WIDTH;
+        int gameHeight = GameConfig.HEIGHT;
+
         gameG.setColor(BG);
         gameG.fillRect(0, 0, gameWidth, gameHeight);
-        backdropEffects.drawBackdrop(gameG, screen, selectedTimerStyle, getEncounterTimerProgress());
-        drawScanlines(gameG);
+        backdropEffects.drawBackdrop(gameG, screen, game.model.TimerStyle.BACKDROP_HUE, getEncounterTimerProgress());
 
         if (screen == ScreenState.MENU) {
             drawMenu(gameG);
             if (menuTransitionActive) {
                 drawMenuTransitionOverlay(gameG);
             }
-            gameG.dispose();
-            g2d.dispose();
+            return;
+        }
+        if (screen == ScreenState.SETTINGS) {
+            drawSettingsMenu(gameG);
             return;
         }
 
         drawHeartHud(gameG);
 
-        if (screen == ScreenState.DUNGEON) {
+        if (screen == ScreenState.DUNGEON || screen == ScreenState.SHOP) {
             drawDungeon(gameG);
+            if (screen == ScreenState.SHOP) {
+                drawShopOverlay(gameG);
+            }
         } else {
             drawArena(gameG);
-            drawSequence(gameG);
+            if (roundManager.getActiveArchetype().isRhythmMode()) {
+                drawRhythmEncounter(gameG);
+            } else {
+                drawSequence(gameG);
+            }
         }
 
         if (screen == ScreenState.LOST) {
@@ -243,9 +354,180 @@ public class GamePanel extends JPanel implements ActionListener {
         if (menuTransitionActive) {
             drawMenuTransitionOverlay(gameG);
         }
+    }
 
-        gameG.dispose();
-        g2d.dispose();
+    private void drawCurvedScreenImage(Graphics2D g2d, BufferedImage source, int targetWidth, int targetHeight) {
+        g2d.setColor(Color.BLACK);
+        g2d.fillRect(0, 0, targetWidth, targetHeight);
+
+        BufferedImage warpSource = source;
+        if (crtBleedEnabled) {
+            warpSource = buildCrtBleedBuffer(source);
+        }
+        if (Math.abs(crtBrightnessGain - 1.0f) > 0.001f) {
+            warpSource = applyCrtBrightness(warpSource);
+        }
+
+        if (crtWarpBuffer == null || crtWarpBuffer.getWidth() != targetWidth || crtWarpBuffer.getHeight() != targetHeight) {
+            crtWarpBuffer = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
+        }
+
+        Graphics2D warpG = crtWarpBuffer.createGraphics();
+        warpG.setComposite(AlphaComposite.Src);
+        warpG.setColor(new Color(0, 0, 0, 0));
+        warpG.fillRect(0, 0, targetWidth, targetHeight);
+
+        for (int y = 0; y < targetHeight; y += CRT_WARP_STRIP_PX) {
+            int stripHeight = Math.min(CRT_WARP_STRIP_PX, targetHeight - y);
+            int rowWidth = crtRowWidths[y];
+            int rowX = crtRowXs[y];
+
+            int srcY0 = (int) ((y / (double) targetHeight) * warpSource.getHeight());
+            int srcY1 = (int) (((y + stripHeight) / (double) targetHeight) * warpSource.getHeight());
+            if (srcY1 <= srcY0) {
+                srcY1 = Math.min(warpSource.getHeight(), srcY0 + 1);
+            }
+
+            warpG.drawImage(
+                    warpSource,
+                    rowX,
+                    y,
+                    rowX + rowWidth,
+                    y + stripHeight,
+                    0,
+                    srcY0,
+                    warpSource.getWidth(),
+                    srcY1,
+                    null
+            );
+        }
+        warpG.dispose();
+
+        for (int x = 0; x < targetWidth; x += CRT_WARP_STRIP_PX) {
+            int stripWidth = Math.min(CRT_WARP_STRIP_PX, targetWidth - x);
+            int destTop = crtColTops[x];
+            int destBottom = crtColBottoms[x];
+            if (destBottom <= destTop) {
+                continue;
+            }
+
+            g2d.drawImage(
+                    crtWarpBuffer,
+                    x,
+                    destTop,
+                    x + stripWidth,
+                    destBottom,
+                    x,
+                    0,
+                    x + stripWidth,
+                    targetHeight,
+                    null
+            );
+        }
+    }
+
+    private void drawCurvedScreenMatte(Graphics2D g2d, int targetWidth, int targetHeight) {
+        if (crtMatteBuffer == null || crtMatteBuffer.getWidth() != targetWidth || crtMatteBuffer.getHeight() != targetHeight) {
+            crtMatteBuffer = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D matteG = crtMatteBuffer.createGraphics();
+            matteG.setComposite(AlphaComposite.Src);
+            matteG.setColor(new Color(0, 0, 0, 0));
+            matteG.fillRect(0, 0, targetWidth, targetHeight);
+            matteG.setColor(Color.BLACK);
+            for (int y = 0; y < targetHeight; y++) {
+                int rowWidth = crtRowWidths[y];
+                int rowX = crtRowXs[y];
+                if (rowX > 0) {
+                    matteG.drawLine(0, y, rowX, y);
+                    matteG.drawLine(rowX + rowWidth, y, targetWidth, y);
+                }
+            }
+            for (int x = 0; x < targetWidth; x++) {
+                int verticalInset = crtColTops[x];
+                if (verticalInset > 0) {
+                    matteG.drawLine(x, 0, x, verticalInset);
+                    matteG.drawLine(x, targetHeight - verticalInset, x, targetHeight);
+                }
+            }
+            matteG.dispose();
+        }
+        g2d.drawImage(crtMatteBuffer, 0, 0, null);
+    }
+
+    private BufferedImage buildCrtBleedBuffer(BufferedImage source) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        if (crtBleedBuffer == null || crtBleedBuffer.getWidth() != width || crtBleedBuffer.getHeight() != height) {
+            crtBleedBuffer = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        }
+
+        Graphics2D bleedG = crtBleedBuffer.createGraphics();
+        bleedG.setComposite(AlphaComposite.Src);
+        bleedG.setColor(new Color(0, 0, 0, 0));
+        bleedG.fillRect(0, 0, width, height);
+        bleedG.drawImage(source, 0, 0, null);
+
+        bleedG.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, CRT_BLEED_INTENSITY));
+        bleedG.drawImage(source, CRT_BLEED_RED_OP, CRT_BLEED_OFFSET_X, 0);
+        bleedG.drawImage(source, CRT_BLEED_GREEN_OP, 0, CRT_BLEED_OFFSET_Y);
+        bleedG.drawImage(source, CRT_BLEED_BLUE_OP, -CRT_BLEED_OFFSET_X, 0);
+        bleedG.dispose();
+
+        return crtBleedBuffer;
+    }
+
+    private BufferedImage applyCrtBrightness(BufferedImage source) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        if (crtBrightnessBuffer == null || crtBrightnessBuffer.getWidth() != width || crtBrightnessBuffer.getHeight() != height) {
+            crtBrightnessBuffer = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        }
+        getCrtBrightnessOp().filter(source, crtBrightnessBuffer);
+        return crtBrightnessBuffer;
+    }
+
+    private RescaleOp getCrtBrightnessOp() {
+        if (crtBrightnessOp == null || Math.abs(lastCrtBrightnessGain - crtBrightnessGain) > 0.001f) {
+            lastCrtBrightnessGain = crtBrightnessGain;
+            crtBrightnessOp = new RescaleOp(
+                    new float[]{crtBrightnessGain, crtBrightnessGain, crtBrightnessGain, 1f},
+                    new float[]{0f, 0f, 0f, 0f},
+                    null
+            );
+        }
+        return crtBrightnessOp;
+    }
+
+    private void ensureCrtGeometry(int targetWidth, int targetHeight) {
+        boolean sizeChanged = crtRowXs == null
+                || crtRowXs.length != targetHeight
+                || crtColTops == null
+                || crtColTops.length != targetWidth;
+        if (!sizeChanged) {
+            return;
+        }
+
+        crtRowXs = new int[targetHeight];
+        crtRowWidths = new int[targetHeight];
+        for (int y = 0; y < targetHeight; y++) {
+            double normalizedY = ((y + 0.5) / targetHeight) * 2.0 - 1.0;
+            double curveFactor = 1.0 - (CRT_WARP_STRENGTH * (normalizedY * normalizedY));
+            int rowWidth = Math.max(1, (int) Math.round(targetWidth * curveFactor));
+            crtRowWidths[y] = rowWidth;
+            crtRowXs[y] = (targetWidth - rowWidth) / 2;
+        }
+
+        crtColTops = new int[targetWidth];
+        crtColBottoms = new int[targetWidth];
+        for (int x = 0; x < targetWidth; x++) {
+            double normalizedX = ((x + 0.5) / targetWidth) * 2.0 - 1.0;
+            int verticalInset = (int) Math.round(targetHeight * CRT_VERTICAL_CURVE_STRENGTH * (normalizedX * normalizedX));
+            crtColTops[x] = verticalInset;
+            crtColBottoms[x] = targetHeight - verticalInset;
+        }
+
+        crtOverlayBuffer = null;
+        crtMatteBuffer = null;
     }
 
     @Override
@@ -269,7 +551,9 @@ public class GamePanel extends JPanel implements ActionListener {
                     encounterTransitionActive = false;
                     activeEncounterIndex = pendingEncounterIndex;
                     pendingEncounterIndex = -1;
-                    roundManager.startGame(false);
+                    long encounterBonusMs = nextEncounterTimeBonusMs;
+                    nextEncounterTimeBonusMs = 0L;
+                    roundManager.startGame(false, encounterBonusMs);
                     resetTimerBarAnimation();
                     screen = ScreenState.ENCOUNTER;
                     encounterIntroActive = true;
@@ -335,16 +619,61 @@ public class GamePanel extends JPanel implements ActionListener {
         drawMenuOption(g2d, MENU_ITEM_START, "START RUN", GameConfig.WIDTH / 2, boxY + 265);
         drawMenuOption(
                 g2d,
-                MENU_ITEM_TIMER_STYLE,
-                "TIMER STYLE: " + selectedTimerStyle.getLabel(),
+                MENU_ITEM_TEST_ENEMY,
+                "TEST ENEMY: " + getTestEnemyMenuLabel(),
                 GameConfig.WIDTH / 2,
                 boxY + 305
         );
+        drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", GameConfig.WIDTH / 2, boxY + 345);
 
         g2d.setFont(SMALL_FONT);
         g2d.setColor(TEXT_DIM);
         drawCenteredString(g2d, "UP/DOWN SELECT  |  LEFT/RIGHT CHANGE", GameConfig.WIDTH / 2, boxY + boxH - 58);
         drawCenteredString(g2d, "ENTER CONFIRM  |  ESC MENU", GameConfig.WIDTH / 2, boxY + boxH - 30);
+    }
+
+    private void drawSettingsMenu(Graphics2D g2d) {
+        int boxX = 110;
+        int boxY = 130;
+        int boxW = GameConfig.WIDTH - 220;
+        int boxH = GameConfig.HEIGHT - 210;
+
+        g2d.setColor(new Color(4, 15, 36, 220));
+        g2d.fillRect(boxX + 2, boxY + 2, boxW - 3, boxH - 3);
+        drawFrame(g2d, boxX, boxY, boxW, boxH, 4, WHITE);
+
+        g2d.setFont(TITLE_FONT);
+        drawGlowingCenteredString(g2d, "SETTINGS", GameConfig.WIDTH / 2, boxY + 80, WHITE, GLOW_CYAN);
+
+        int lineY = boxY + 150;
+        int lineStep = 42;
+        drawSettingsOption(g2d, SETTINGS_ITEM_RENDER_QUALITY, "RENDER QUALITY", getRenderQualityLabel(), lineY);
+        lineY += lineStep;
+        drawSettingsOption(g2d, SETTINGS_ITEM_CRT_BLEED, "CRT BLEED", getCrtBleedLabel(), lineY);
+        lineY += lineStep;
+        drawSettingsBrightness(g2d, SETTINGS_ITEM_CRT_BRIGHTNESS, lineY);
+        lineY += lineStep;
+        drawSettingsOption(g2d, SETTINGS_ITEM_ASPECT, "ASPECT RATIO", getAspectLabel(), lineY);
+        lineY += lineStep;
+        drawSettingsOption(g2d, SETTINGS_ITEM_BACK, "BACK", "", lineY);
+
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        drawCenteredString(g2d, "UP/DOWN SELECT  |  LEFT/RIGHT CHANGE", GameConfig.WIDTH / 2, boxY + boxH - 58);
+        drawCenteredString(g2d, "ENTER TOGGLE  |  ESC BACK", GameConfig.WIDTH / 2, boxY + boxH - 30);
+    }
+
+    private void drawSettingsOption(Graphics2D g2d, int optionIndex, String label, String value, int baselineY) {
+        boolean selected = settingsSelectionIndex == optionIndex;
+        String display = value == null || value.isBlank() ? label : label + ": " + value;
+        int centerX = GameConfig.WIDTH / 2;
+        g2d.setFont(BODY_FONT);
+        if (selected) {
+            drawGlowingCenteredString(g2d, "> " + display + " <", centerX, baselineY, YELLOW, GLOW_CYAN);
+        } else {
+            g2d.setColor(WHITE);
+            drawCenteredString(g2d, display, centerX, baselineY);
+        }
     }
 
     private void drawMenuOption(Graphics2D g2d, int optionIndex, String label, int centerX, int baselineY) {
@@ -363,11 +692,11 @@ public class GamePanel extends JPanel implements ActionListener {
             menuSelectionIndex = (menuSelectionIndex - 1 + MENU_ITEM_COUNT) % MENU_ITEM_COUNT;
         } else if (direction == Direction.DOWN) {
             menuSelectionIndex = (menuSelectionIndex + 1) % MENU_ITEM_COUNT;
-        } else if (menuSelectionIndex == MENU_ITEM_TIMER_STYLE) {
+        } else if (menuSelectionIndex == MENU_ITEM_TEST_ENEMY) {
             if (direction == Direction.LEFT) {
-                cycleTimerStyle(-1);
+                cycleTestEnemy(-1);
             } else if (direction == Direction.RIGHT) {
-                cycleTimerStyle(1);
+                cycleTestEnemy(1);
             }
         }
     }
@@ -375,16 +704,170 @@ public class GamePanel extends JPanel implements ActionListener {
     private void activateSelectedMenuItem() {
         if (menuSelectionIndex == MENU_ITEM_START) {
             startRun();
-        } else if (menuSelectionIndex == MENU_ITEM_TIMER_STYLE) {
-            cycleTimerStyle(1);
+        } else if (menuSelectionIndex == MENU_ITEM_TEST_ENEMY) {
+            cycleTestEnemy(1);
+        } else if (menuSelectionIndex == MENU_ITEM_SETTINGS) {
+            settingsSelectionIndex = SETTINGS_ITEM_RENDER_QUALITY;
+            screen = ScreenState.SETTINGS;
         }
     }
 
-    private void cycleTimerStyle(int delta) {
-        TimerStyle[] styles = TimerStyle.values();
-        int currentIndex = selectedTimerStyle.ordinal();
-        int nextIndex = (currentIndex + delta + styles.length) % styles.length;
-        selectedTimerStyle = styles[nextIndex];
+    private void handleSettingsDirection(Direction direction) {
+        if (direction == Direction.UP) {
+            settingsSelectionIndex = (settingsSelectionIndex - 1 + SETTINGS_ITEM_COUNT) % SETTINGS_ITEM_COUNT;
+            return;
+        }
+        if (direction == Direction.DOWN) {
+            settingsSelectionIndex = (settingsSelectionIndex + 1) % SETTINGS_ITEM_COUNT;
+            return;
+        }
+
+        int delta = direction == Direction.LEFT ? -1 : direction == Direction.RIGHT ? 1 : 0;
+        if (delta == 0) {
+            return;
+        }
+
+        if (settingsSelectionIndex == SETTINGS_ITEM_RENDER_QUALITY) {
+            renderQualityIndex = wrapIndex(renderQualityIndex + delta, RENDER_QUALITY_LABELS.length);
+            applyRenderQuality();
+        } else if (settingsSelectionIndex == SETTINGS_ITEM_CRT_BLEED) {
+            crtBleedEnabled = !crtBleedEnabled;
+        } else if (settingsSelectionIndex == SETTINGS_ITEM_CRT_BRIGHTNESS) {
+            crtBrightnessIndex = wrapIndex(crtBrightnessIndex + delta, CRT_BRIGHTNESS_LEVELS.length);
+            crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[crtBrightnessIndex];
+        } else if (settingsSelectionIndex == SETTINGS_ITEM_ASPECT) {
+            aspectModeIndex = wrapIndex(aspectModeIndex + delta, ASPECT_MODE_LABELS.length);
+        }
+    }
+
+    private void activateSelectedSettingsItem() {
+        if (settingsSelectionIndex == SETTINGS_ITEM_BACK) {
+            screen = ScreenState.MENU;
+            return;
+        }
+
+        if (settingsSelectionIndex == SETTINGS_ITEM_RENDER_QUALITY) {
+            renderQualityIndex = wrapIndex(renderQualityIndex + 1, RENDER_QUALITY_LABELS.length);
+            applyRenderQuality();
+        } else if (settingsSelectionIndex == SETTINGS_ITEM_CRT_BLEED) {
+            crtBleedEnabled = !crtBleedEnabled;
+        } else if (settingsSelectionIndex == SETTINGS_ITEM_CRT_BRIGHTNESS) {
+            crtBrightnessIndex = wrapIndex(crtBrightnessIndex + 1, CRT_BRIGHTNESS_LEVELS.length);
+            crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[crtBrightnessIndex];
+        } else if (settingsSelectionIndex == SETTINGS_ITEM_ASPECT) {
+            aspectModeIndex = wrapIndex(aspectModeIndex + 1, ASPECT_MODE_LABELS.length);
+        }
+    }
+
+    private void handleShopDirection(Direction direction) {
+        if (direction == Direction.UP) {
+            shopSelectionIndex = (shopSelectionIndex - 1 + SHOP_ITEM_COUNT) % SHOP_ITEM_COUNT;
+        } else if (direction == Direction.DOWN) {
+            shopSelectionIndex = (shopSelectionIndex + 1) % SHOP_ITEM_COUNT;
+        }
+    }
+
+    private void purchaseSelectedShopItem() {
+        ShopOption option = ShopOption.values()[shopSelectionIndex];
+        if (coinCount < option.getCost()) {
+            return;
+        }
+
+        boolean purchased = false;
+        if (option == ShopOption.HEAL && playerHealthUnits < MAX_HEALTH_UNITS) {
+            playerHealthUnits = Math.min(MAX_HEALTH_UNITS, playerHealthUnits + 2);
+            purchased = true;
+        } else if (option == ShopOption.SHIELD) {
+            mistakeGuardCharges++;
+            purchased = true;
+        } else if (option == ShopOption.TIMER) {
+            nextEncounterTimeBonusMs += GameConfig.SHOP_TIMER_BONUS_MS;
+            purchased = true;
+        }
+
+        if (!purchased) {
+            return;
+        }
+
+        coinCount -= option.getCost();
+        lastCoinGain = -option.getCost();
+        lastCoinGainUntilMs = System.currentTimeMillis() + 760L;
+        AudioManager.playSfx("bar_fill.wav");
+    }
+
+    private void cycleTestEnemy(int delta) {
+        EnemyArchetype[] archetypes = EnemyArchetype.values();
+        int currentIndex = forcedTestEnemy == null ? -1 : forcedTestEnemy.ordinal();
+        int nextIndex = currentIndex + delta;
+        if (nextIndex < -1) {
+            nextIndex = archetypes.length - 1;
+        } else if (nextIndex >= archetypes.length) {
+            nextIndex = -1;
+        }
+        forcedTestEnemy = nextIndex == -1 ? null : archetypes[nextIndex];
+    }
+
+    private String getTestEnemyMenuLabel() {
+        return forcedTestEnemy == null ? "OFF" : forcedTestEnemy.getLabel();
+    }
+
+    private String getRenderQualityLabel() {
+        return RENDER_QUALITY_LABELS[renderQualityIndex];
+    }
+
+    private String getCrtBleedLabel() {
+        return crtBleedEnabled ? "ON" : "OFF";
+    }
+
+    private String getAspectLabel() {
+        return ASPECT_MODE_LABELS[aspectModeIndex];
+    }
+
+    private void drawSettingsBrightness(Graphics2D g2d, int optionIndex, int baselineY) {
+        boolean selected = settingsSelectionIndex == optionIndex;
+        int centerX = GameConfig.WIDTH / 2;
+        int barWidth = 260;
+        int barHeight = 10;
+        int barX = centerX - (barWidth / 2);
+        int barY = baselineY + 8;
+
+        g2d.setFont(BODY_FONT);
+        if (selected) {
+            drawGlowingCenteredString(g2d, "> CRT BRIGHTNESS <", centerX, baselineY, YELLOW, GLOW_CYAN);
+        } else {
+            g2d.setColor(WHITE);
+            drawCenteredString(g2d, "CRT BRIGHTNESS", centerX, baselineY);
+        }
+
+        g2d.setColor(new Color(12, 26, 48, 200));
+        g2d.fillRect(barX, barY, barWidth, barHeight);
+        g2d.setColor(new Color(160, 220, 255, 120));
+        g2d.drawRect(barX, barY, barWidth, barHeight);
+
+        int segments = CRT_BRIGHTNESS_LEVELS.length;
+        int gap = 4;
+        int segmentWidth = (barWidth - (gap * (segments - 1))) / segments;
+        for (int i = 0; i < segments; i++) {
+            int x = barX + (i * (segmentWidth + gap));
+            if (i <= crtBrightnessIndex) {
+                g2d.setColor(new Color(110, 240, 255, 200));
+                g2d.fillRect(x, barY + 2, segmentWidth, barHeight - 3);
+            } else {
+                g2d.setColor(new Color(70, 120, 170, 120));
+                g2d.fillRect(x, barY + 2, segmentWidth, barHeight - 3);
+            }
+        }
+    }
+
+    private void applyRenderQuality() {
+        sceneBufferWidth = RENDER_QUALITY_WIDTHS[renderQualityIndex];
+        sceneBufferHeight = RENDER_QUALITY_HEIGHTS[renderQualityIndex];
+        sceneBuffer = null;
+    }
+
+    private int wrapIndex(int value, int size) {
+        int idx = value % size;
+        return idx < 0 ? idx + size : idx;
     }
 
     private void drawDungeon(Graphics2D g2d) {
@@ -400,10 +883,10 @@ public class GamePanel extends JPanel implements ActionListener {
         drawCenteredString(g2d, "DUNGEON ROOM " + roomNumber, GameConfig.WIDTH / 2, ARENA_Y + 28);
 
         for (EncounterNode node : roomEncounters) {
-            if (node.isCleared()) {
+            if (node.isEncounter() && node.isCleared()) {
                 continue;
             }
-            g2d.setColor(RED);
+            g2d.setColor(node.isShop() ? YELLOW : RED);
             g2d.fillRect(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
             g2d.setColor(WHITE);
             g2d.drawRect(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
@@ -421,6 +904,10 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.drawRect(door.x, door.y, door.width, door.height);
 
         drawSoul(g2d, (int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, YELLOW);
+
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        drawCenteredString(g2d, "RED = FIGHT   CYAN = SHOP", GameConfig.WIDTH / 2, ARENA_Y + ARENA_H + 34);
     }
 
     private void drawEnemyKillEffects(Graphics2D g2d) {
@@ -429,9 +916,6 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void drawArena(Graphics2D g2d) {
         int encounterArenaY = ENCOUNTER_ARENA_Y;
-        if (selectedTimerStyle == TimerStyle.BORDER_RING) {
-            drawEncounterTimerBorder(g2d, 24, 14, GameConfig.WIDTH - 48, GameConfig.HEIGHT - 28);
-        }
         drawEncounterEnemyBar(g2d, encounterArenaY);
     }
 
@@ -442,9 +926,14 @@ public class GamePanel extends JPanel implements ActionListener {
         }
         int enemyBarY = encounterArenaY + 400;
 
-        /*g2d.setFont(SMALL_FONT);
+        g2d.setFont(SMALL_FONT);
         g2d.setColor(new Color(255, 186, 230, 170));
-        drawCenteredString(g2d, "TARGET", GameConfig.WIDTH / 2, enemyBarY - 10);*/
+        drawCenteredString(
+                g2d,
+                enemy.getArchetype().getLabel() + "  |  " + enemy.getArchetype().getRuleLabel(),
+                GameConfig.WIDTH / 2,
+                enemyBarY - 10
+        );
 
         //enemy health bar
         g2d.setColor(new Color(255, 116, 208, 50));
@@ -492,14 +981,15 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.setColor(new Color(255, 122, 200, alpha));
             drawCenteredString(g2d, "-" + lastHitDamage, GameConfig.WIDTH / 2, enemyBarY - 18 - yOffset);
         }
-        /*if (now < lastCoinGainUntilMs && lastCoinGain > 0) {
+        if (now < lastCoinGainUntilMs && lastCoinGain != 0) {
             double popProgress = 1.0 - ((lastCoinGainUntilMs - now) / 760.0);
             int yOffset = (int) Math.round(12 * popProgress);
             int alpha = (int) Math.round(255 * (1.0 - popProgress));
             alpha = Math.max(0, Math.min(255, alpha));
+            String deltaLabel = (lastCoinGain > 0 ? "+" : "") + lastCoinGain + " COINS";
             g2d.setColor(new Color(255, 214, 112, alpha));
-            drawCenteredString(g2d, "+" + lastCoinGain + " COINS", GameConfig.WIDTH / 2, enemyBarY - 34 - yOffset);
-        }*/
+            drawCenteredString(g2d, deltaLabel, GameConfig.WIDTH / 2, enemyBarY - 34 - yOffset);
+        }
     }
 
     private void drawSequence(Graphics2D g2d) {
@@ -514,10 +1004,14 @@ public class GamePanel extends JPanel implements ActionListener {
         int y = ENCOUNTER_ARENA_Y + (ARENA_H - SEQUENCE_SYMBOL_SIZE) / 2 + 52;
         boolean wrongFlash = roundManager.isWrongFlashActive();
         int progressIndex = roundManager.getProgressIndex();
-
+        boolean hideSequence = roundManager.shouldHideSequence();
+        boolean reverseInput = roundManager.getActiveArchetype().isReverseInput();
+        int visibleCount = roundManager.getVisibleSequenceCount();
         for (int i = 0; i < count; i++) {
             int x = startX + i * (SEQUENCE_SYMBOL_SIZE + SEQUENCE_SYMBOL_GAP);
-            boolean isCorrect = !wrongFlash && i < progressIndex;
+            boolean isCorrect = !wrongFlash
+                    && (reverseInput ? i >= count - progressIndex : i < progressIndex);
+            boolean isVisible = i < visibleCount;
             Color tileBg = new Color(3, 16, 38, 150);
             Color tileFill = wrongFlash ? new Color(130, 24, 68, 170) : (isCorrect ? new Color(14, 72, 120, 180) : new Color(12, 34, 66, 165));
             Color borderColor = wrongFlash ? RED : (isCorrect ? GREEN : WHITE);
@@ -530,14 +1024,23 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.setColor(borderColor);
             g2d.drawRect(x, y, SEQUENCE_SYMBOL_SIZE, SEQUENCE_SYMBOL_SIZE);
 
-            Direction direction = Direction.values()[sequence.get(i)];
-            BufferedImage sprite = isCorrect ? arrowSpritesGreen.get(direction) : arrowSprites.get(direction);
-            if (sprite != null) {
-                drawArrowSprite(g2d, sprite, x, y, SEQUENCE_SYMBOL_SIZE);
+            if (hideSequence || !isVisible) {
+                g2d.setColor(new Color(255, 255, 255, 110));
+                drawCenteredString(g2d, "?", x + (SEQUENCE_SYMBOL_SIZE / 2), y + 47);
             } else {
-                drawArrow(g2d, direction, x, y, SEQUENCE_SYMBOL_SIZE, symbolColor);
+                Direction direction = Direction.values()[sequence.get(i)];
+                BufferedImage sprite = isCorrect ? arrowSpritesGreen.get(direction) : arrowSprites.get(direction);
+                if (sprite != null) {
+                    drawArrowSprite(g2d, sprite, x, y, SEQUENCE_SYMBOL_SIZE);
+                } else {
+                    drawArrow(g2d, direction, x, y, SEQUENCE_SYMBOL_SIZE, symbolColor);
+                }
             }
         }
+    }
+
+    private void drawRhythmEncounter(Graphics2D g2d) {
+        drawSequence(g2d);
     }
 
     private void drawLossOverlay(Graphics2D g2d) {
@@ -560,6 +1063,42 @@ public class GamePanel extends JPanel implements ActionListener {
         drawCenteredString(g2d, "ESC = MENU", GameConfig.WIDTH / 2, y + 138);
     }
 
+    private void drawShopOverlay(Graphics2D g2d) {
+        int w = 520;
+        int h = 270;
+        int x = (GameConfig.WIDTH - w) / 2;
+        int y = (GameConfig.HEIGHT - h) / 2 + 10;
+
+        g2d.setColor(new Color(3, 16, 38, 232));
+        g2d.fillRect(x, y, w, h);
+        drawFrame(g2d, x, y, w, h, 4, WHITE);
+
+        g2d.setFont(HUD_FONT);
+        drawGlowingCenteredString(g2d, "FIELD SHOP", GameConfig.WIDTH / 2, y + 46, YELLOW, GLOW_CYAN);
+
+        ShopOption[] options = ShopOption.values();
+        for (int i = 0; i < options.length; i++) {
+            ShopOption option = options[i];
+            int rowY = y + 90 + (i * 52);
+            boolean selected = shopSelectionIndex == i;
+            boolean affordable = coinCount >= option.getCost();
+            Color color = selected ? YELLOW : (affordable ? WHITE : TEXT_DIM);
+
+            g2d.setFont(BODY_FONT);
+            g2d.setColor(color);
+            String label = (selected ? "> " : "  ") + option.getLabel() + "  [" + option.getCost() + "C]";
+            g2d.drawString(label, x + 42, rowY);
+
+            g2d.setFont(SMALL_FONT);
+            g2d.setColor(TEXT_DIM);
+            g2d.drawString(option.getDescription(), x + 64, rowY + 20);
+        }
+
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        drawCenteredString(g2d, "ENTER BUY  |  ESC LEAVE", GameConfig.WIDTH / 2, y + h - 26);
+    }
+
     private void setupKeyBindings() {
         bindDirection("UP", Direction.UP);
         bindDirection("DOWN", Direction.DOWN);
@@ -578,6 +1117,10 @@ public class GamePanel extends JPanel implements ActionListener {
                 }
                 if (screen == ScreenState.MENU) {
                     activateSelectedMenuItem();
+                } else if (screen == ScreenState.SETTINGS) {
+                    activateSelectedSettingsItem();
+                } else if (screen == ScreenState.SHOP) {
+                    purchaseSelectedShopItem();
                 } else if (screen == ScreenState.LOST) {
                     startRun();
                 }
@@ -588,7 +1131,11 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put("go_to_menu", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if (screen != ScreenState.MENU && !menuTransitionActive) {
+                if (screen == ScreenState.SHOP) {
+                    closeShop();
+                } else if (screen == ScreenState.SETTINGS) {
+                    screen = ScreenState.MENU;
+                } else if (screen != ScreenState.MENU && !menuTransitionActive) {
                     startMenuTransition();
                 }
             }
@@ -606,6 +1153,14 @@ public class GamePanel extends JPanel implements ActionListener {
             public void actionPerformed(ActionEvent e) {
                 if (screen == ScreenState.MENU && !menuTransitionActive) {
                     handleMenuDirection(direction);
+                    return;
+                }
+                if (screen == ScreenState.SETTINGS && !menuTransitionActive) {
+                    handleSettingsDirection(direction);
+                    return;
+                }
+                if (screen == ScreenState.SHOP && !menuTransitionActive) {
+                    handleShopDirection(direction);
                     return;
                 }
                 if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive) {
@@ -652,6 +1207,9 @@ public class GamePanel extends JPanel implements ActionListener {
         roomNumber = 1;
         coinCount = 0;
         playerHealthUnits = MAX_HEALTH_UNITS;
+        mistakeGuardCharges = 0L;
+        nextEncounterTimeBonusMs = 0L;
+        shopSelectionIndex = 0;
         lastCoinGain = 0;
         lastCoinGainUntilMs = 0L;
         clearMovementInput();
@@ -667,6 +1225,7 @@ public class GamePanel extends JPanel implements ActionListener {
         runStartFadeInStartMs = System.currentTimeMillis();
         enemyKillEffects.clear();
         backdropEffects.clearHueSweeps();
+        roundManager.configureEncounter(EnemyArchetype.NORMAL);
         roundManager.startGame(true);
         generateRoom();
         AudioManager.playSfx("enter_game.wav");
@@ -698,7 +1257,7 @@ public class GamePanel extends JPanel implements ActionListener {
         int encounters = 1 + random.nextInt(3);
         int maxTries = 50;
         for (int i = 0; i < encounters; i++) {
-            EncounterNode node = new EncounterNode(generateEnemyHealthForRoom());
+            EncounterNode node = EncounterNode.createEncounter(generateEnemyHealthForRoom(), rollEnemyArchetype());
             boolean placed = false;
             for (int tries = 0; tries < maxTries; tries++) {
                 int nx = ROOM_X + 80 + random.nextInt(Math.max(1, ROOM_W - 220));
@@ -723,12 +1282,50 @@ public class GamePanel extends JPanel implements ActionListener {
             }
         }
 
+        if (shouldSpawnShopInRoom()) {
+            EncounterNode shopNode = EncounterNode.createShop();
+            placeRoomNode(shopNode, maxTries);
+        }
+
         if (roomEncounters.isEmpty()) {
-            EncounterNode fallback = new EncounterNode(generateEnemyHealthForRoom());
+            EncounterNode fallback = EncounterNode.createEncounter(generateEnemyHealthForRoom(), rollEnemyArchetype());
             fallback.setX(ROOM_X + ROOM_W / 2);
             fallback.setY(ROOM_Y + ROOM_H / 2);
             roomEncounters.add(fallback);
         }
+    }
+
+    private boolean shouldSpawnShopInRoom() {
+        return roomNumber > 1 && (roomNumber % 3 == 0 || random.nextDouble() < 0.18);
+    }
+
+    private void placeRoomNode(EncounterNode node, int maxTries) {
+        for (int tries = 0; tries < maxTries; tries++) {
+            int nx = ROOM_X + 80 + random.nextInt(Math.max(1, ROOM_W - 220));
+            int ny = ROOM_Y + 40 + random.nextInt(Math.max(1, ROOM_H - 80));
+            Rectangle candidate = new Rectangle(nx, ny, ENCOUNTER_SIZE, ENCOUNTER_SIZE);
+            if (candidate.intersects(new Rectangle((int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, PLAYER_SIZE))) {
+                continue;
+            }
+            if (candidate.intersects(getDoorRect())) {
+                continue;
+            }
+            if (intersectsAnyEncounter(candidate)) {
+                continue;
+            }
+            node.setX(nx);
+            node.setY(ny);
+            roomEncounters.add(node);
+            return;
+        }
+    }
+
+    private EnemyArchetype rollEnemyArchetype() {
+        if (forcedTestEnemy != null) {
+            return forcedTestEnemy;
+        }
+        EnemyArchetype[] archetypes = EnemyArchetype.values();
+        return archetypes[random.nextInt(archetypes.length)];
     }
 
     private int generateEnemyHealthForRoom() {
@@ -777,12 +1374,16 @@ public class GamePanel extends JPanel implements ActionListener {
         if (!allEncountersCleared()) {
             for (int i = 0; i < roomEncounters.size(); i++) {
                 EncounterNode node = roomEncounters.get(i);
-                if (node.isCleared()) {
+                if (node.isEncounter() && node.isCleared()) {
                     continue;
                 }
                 Rectangle encounterRect = new Rectangle(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
                 if (playerRect.intersects(encounterRect)) {
-                    startEncounter(i);
+                    if (node.isShop()) {
+                        openShop();
+                    } else {
+                        startEncounter(i);
+                    }
                     return;
                 }
             }
@@ -796,10 +1397,25 @@ public class GamePanel extends JPanel implements ActionListener {
         lastHitDamage = 0;
         lastHitUntilMs = 0;
         backdropEffects.clearHueSweeps();
+        EncounterEnemy enemy = roomEncounters.get(encounterIndex).getEnemy();
+        roundManager.configureEncounter(enemy.getArchetype());
         AudioManager.playSfx("encounter_start.wav");
         pendingEncounterIndex = encounterIndex;
         encounterTransitionActive = true;
         encounterTransitionStartMs = System.currentTimeMillis();
+    }
+
+    private void openShop() {
+        clearMovementInput();
+        screen = ScreenState.SHOP;
+        shopSelectionIndex = 0;
+    }
+
+    private void closeShop() {
+        if (screen == ScreenState.SHOP) {
+            screen = ScreenState.DUNGEON;
+            clearMovementInput();
+        }
     }
 
     private void startRoomTransition(Direction exitedDir) {
@@ -845,7 +1461,11 @@ public class GamePanel extends JPanel implements ActionListener {
         if (completion == null) {
             boolean triggeredWrongInput = !wrongFlashBefore && roundManager.isWrongFlashActive();
             if (triggeredWrongInput) {
-                applyPlayerDamage(1, false);
+                if (mistakeGuardCharges > 0) {
+                    mistakeGuardCharges--;
+                } else {
+                    applyPlayerDamage(1, false);
+                }
             }
             return;
         }
@@ -853,10 +1473,12 @@ public class GamePanel extends JPanel implements ActionListener {
             return;
         }
 
-        backdropEffects.triggerHueSweepRipple(completion, roundManager.getTimeLeftMs(), selectedTimerStyle);
+        backdropEffects.triggerHueSweepRipple(completion, roundManager.getTimeLeftMs(), game.model.TimerStyle.BACKDROP_HUE);
 
         EncounterNode currentNode = roomEncounters.get(activeEncounterIndex);
-        int damage = Math.max(0, completion.getResolvedDamage());
+        int damage = (int) Math.round(
+                Math.max(0, completion.getResolvedDamage()) * currentNode.getEnemy().getArchetype().getDamageMultiplier()
+        );
         currentNode.getEnemy().applyDamage(damage);
         if (damage > 0) {
             lastHitDamage = damage;
@@ -879,7 +1501,7 @@ public class GamePanel extends JPanel implements ActionListener {
         if (enemyDefeated) {
             spawnEnemyDefeatEffect(currentNode);
             AudioManager.playSfx("enemy_defeated.wav");
-        } else {
+        } else if (currentNode.getEnemy().getArchetype().isTimeRecoveryEnabled()) {
             AudioManager.playSfx("bar_fill.wav");
         }
 
@@ -956,7 +1578,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private int countUnclearedEncounters() {
         int count = 0;
         for (EncounterNode node : roomEncounters) {
-            if (!node.isCleared()) {
+            if (node.isEncounter() && !node.isCleared()) {
                 count++;
             }
         }
@@ -1137,6 +1759,11 @@ public class GamePanel extends JPanel implements ActionListener {
         long duration = Math.max(1L, roundManager.getRoundDurationMs());
         displayedTimerDurationMs = duration;
 
+        if (!roundManager.getActiveArchetype().isTimeRecoveryEnabled()) {
+            displayedTimerMs = Math.max(0L, Math.min(duration, targetTimeLeft));
+            return;
+        }
+
         if (displayedTimerMs < 0L) {
             displayedTimerMs = targetTimeLeft;
             return;
@@ -1289,6 +1916,10 @@ public class GamePanel extends JPanel implements ActionListener {
         emptyHeartSprite = loadImage("empty_heart.png");
     }
 
+    private void loadTransitionSprites() {
+        megamanTransitionSprite = loadImage("megaman.png");
+    }
+
     private void drawHeartHud(Graphics2D g2d) {
         int availableWidth = GameConfig.WIDTH - (HEART_BG_MARGIN_X * 2) - ((MAX_HEARTS - 1) * HEART_GAP);
         int heartSize = Math.max(24, availableWidth / MAX_HEARTS);
@@ -1316,6 +1947,14 @@ public class GamePanel extends JPanel implements ActionListener {
             }
         }
         g2d.setComposite(oldComposite);
+
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        g2d.drawString("COINS " + coinCount, 28, 86);
+        g2d.drawString("GUARDS " + mistakeGuardCharges, 28, 106);
+        if (nextEncounterTimeBonusMs > 0L) {
+            g2d.drawString("NEXT +" + nextEncounterTimeBonusMs + "MS", 28, 126);
+        }
     }
 
     private void drawFallbackHeart(Graphics2D g2d, int x, int y, int unitsInSlot, int heartSize) {
@@ -1397,13 +2036,7 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawEncounterTransition(Graphics2D g2d) {
-        drawHorizontalShutterTransition(
-                g2d,
-                encounterTransitionStartMs,
-                ENCOUNTER_TRANSITION_MS,
-                ENCOUNTER_TRANSITION_HOLD_MS,
-                "ENCOUNTER"
-        );
+        drawEncounterEnemySlide(g2d, encounterTransitionStartMs, ENCOUNTER_TRANSITION_MS, ENCOUNTER_TRANSITION_HOLD_MS, getPendingEncounterEnemy());
     }
 
     private void drawRoomTransition(Graphics2D g2d) {
@@ -1412,7 +2045,8 @@ public class GamePanel extends JPanel implements ActionListener {
                 roomTransitionStartMs,
                 ROOM_TRANSITION_MS,
                 ROOM_TRANSITION_HOLD_MS,
-                "NEXT ROOM"
+                "NEXT ROOM",
+                null
         );
     }
 
@@ -1421,7 +2055,8 @@ public class GamePanel extends JPanel implements ActionListener {
             long startMs,
             long transitionMs,
             long holdMs,
-            String text
+            String text,
+            EncounterEnemy encounterEnemy
     ) {
         long elapsedMs = System.currentTimeMillis() - startMs;
         double progress = elapsedMs / (double) transitionMs;
@@ -1487,14 +2122,14 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawEncounterIntro(Graphics2D g2d) {
-        drawTransitionIntro(g2d, encounterIntroStartMs, ENCOUNTER_INTRO_MS, "ENCOUNTER");
+        drawTransitionIntro(g2d, encounterIntroStartMs, ENCOUNTER_INTRO_MS, "", null);
     }
 
     private void drawRoomIntro(Graphics2D g2d) {
-        drawTransitionIntro(g2d, roomIntroStartMs, ROOM_INTRO_MS, "NEXT ROOM");
+        drawTransitionIntro(g2d, roomIntroStartMs, ROOM_INTRO_MS, "NEXT ROOM", null);
     }
 
-    private void drawTransitionIntro(Graphics2D g2d, long startMs, long introMs, String text) {
+    private void drawTransitionIntro(Graphics2D g2d, long startMs, long introMs, String text, EncounterEnemy encounterEnemy) {
         double progress = (System.currentTimeMillis() - startMs) / (double) introMs;
         progress = Math.max(0.0, Math.min(1.0, progress));
 
@@ -1524,6 +2159,115 @@ public class GamePanel extends JPanel implements ActionListener {
                 new Color(WHITE.getRed(), WHITE.getGreen(), WHITE.getBlue(), textAlpha),
                 new Color(GLOW_CYAN.getRed(), GLOW_CYAN.getGreen(), GLOW_CYAN.getBlue(), Math.max(20, textAlpha / 2))
         );
+    }
+
+    private void drawEncounterEnemySlide(
+            Graphics2D g2d,
+            long startMs,
+            long transitionMs,
+            long holdMs,
+            EncounterEnemy encounterEnemy
+    ) {
+        if (encounterEnemy == null) {
+            return;
+        }
+
+        long totalDurationMs = Math.max(1L, transitionMs + holdMs);
+        double progress = (System.currentTimeMillis() - startMs) / (double) totalDurationMs;
+        progress = Math.max(0.0, Math.min(1.0, progress));
+
+        g2d.setColor(Color.BLACK);
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+
+        Color accent = getEnemyAccentColor(encounterEnemy);
+        String label = encounterEnemy.getArchetype().getLabel();
+        g2d.setFont(TRANSITION_ENEMY_FONT);
+        FontMetrics metrics = g2d.getFontMetrics();
+        int textWidth = metrics.stringWidth(label);
+        int textBaselineY = GameConfig.HEIGHT - 92;
+        int startX = -textWidth - 60;
+        int centerX = (GameConfig.WIDTH - textWidth) / 2;
+        int exitX = GameConfig.WIDTH + 60;
+
+        int textX;
+        if (progress < 0.78) {
+            double enterProgress = Math.max(0.0, Math.min(1.0, (progress - 0.12) / 0.66));
+            double eased = (0.68 * easeOutCubic(enterProgress)) + (0.32 * enterProgress);
+            textX = (int) Math.round(startX + ((centerX - startX) * eased));
+        } else {
+            double exitProgress = Math.max(0.0, Math.min(1.0, (progress - 0.78) / 0.22));
+            double eased = (0.34 * exitProgress) + (0.66 * Math.pow(exitProgress, 1.9));
+            textX = (int) Math.round(centerX + ((exitX - centerX) * eased));
+        }
+
+        int glowAlpha = clampInt((int) Math.round(255 * Math.min(1.0, progress * 1.4)), 0, 255);
+        drawEncounterTransitionSprite(g2d, progress, glowAlpha, textX, textBaselineY);
+        g2d.setFont(TRANSITION_ENEMY_FONT);
+        drawGlowingString(
+                g2d,
+                label,
+                textX,
+                textBaselineY,
+                new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), glowAlpha),
+                new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), Math.max(20, glowAlpha / 2))
+        );
+    }
+
+    private void drawEncounterTransitionSprite(Graphics2D g2d, double progress, int alpha, int textX, int textBaselineY) {
+        if (megamanTransitionSprite == null || alpha <= 0) {
+            return;
+        }
+
+        int targetHeight = 460;
+        int targetWidth = (int) Math.round(targetHeight * (megamanTransitionSprite.getWidth() / (double) megamanTransitionSprite.getHeight()));
+        int spriteY = textBaselineY - targetHeight - 126;
+        int settledX = GameConfig.WIDTH - targetWidth - 40;
+        int startX = GameConfig.WIDTH + 80;
+        int spriteX;
+        if (progress < 0.74) {
+            double enterProgress = Math.max(0.0, Math.min(1.0, (progress - 0.08) / 0.58));
+            double eased = (0.72 * easeOutCubic(enterProgress)) + (0.28 * enterProgress);
+            spriteX = (int) Math.round(startX + ((settledX - startX) * eased));
+        } else {
+            double exitProgress = Math.max(0.0, Math.min(1.0, (progress - 0.74) / 0.26));
+            double eased = (0.24 * exitProgress) + (0.76 * Math.pow(exitProgress, 1.85));
+            int exitX = -targetWidth - 120;
+            spriteX = (int) Math.round(settledX + ((exitX - settledX) * eased));
+        }
+
+        Composite oldComposite = g2d.getComposite();
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.max(0.15f, alpha / 255f)));
+        g2d.drawImage(megamanTransitionSprite, spriteX, spriteY, targetWidth, targetHeight, null);
+        g2d.setComposite(oldComposite);
+    }
+
+    private EncounterEnemy getPendingEncounterEnemy() {
+        if (pendingEncounterIndex < 0 || pendingEncounterIndex >= roomEncounters.size()) {
+            return null;
+        }
+        return roomEncounters.get(pendingEncounterIndex).getEnemy();
+    }
+
+    private Color getEnemyAccentColor(EncounterEnemy enemy) {
+        if (enemy == null) {
+            return GLOW_CYAN;
+        }
+        switch (enemy.getArchetype()) {
+            case BERSERKER:
+                return new Color(255, 126, 92);
+            case ECHO:
+                return new Color(255, 92, 198);
+            case REVERSE:
+                return new Color(151, 255, 120);
+            case NORMAL:
+            default:
+                return GLOW_CYAN;
+        }
+    }
+
+    private double easeOutCubic(double value) {
+        double clamped = Math.max(0.0, Math.min(1.0, value));
+        return 1.0 - Math.pow(1.0 - clamped, 3.0);
     }
 
     private void drawRunStartFadeIn(Graphics2D g2d) {
@@ -1574,7 +2318,9 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void updateBackgroundMusic() {
-        String targetFile = screen == ScreenState.MENU ? MENU_MUSIC_FILE : GAMEPLAY_MUSIC_FILE;
+        String targetFile = (screen == ScreenState.MENU || screen == ScreenState.SETTINGS)
+                ? MENU_MUSIC_FILE
+                : GAMEPLAY_MUSIC_FILE;
         if (targetFile.equals(activeMusicFile)) {
             return;
         }
@@ -1601,11 +2347,90 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.fillRect(0, 0, panelWidth, panelHeight);
     }
 
-    private void drawScanlines(Graphics2D g2d) {
-        g2d.setColor(new Color(112, 210, 255, 16));
-        for (int y = 0; y < GameConfig.HEIGHT; y += 4) {
-            g2d.drawLine(0, y, GameConfig.WIDTH, y);
+    private void applyCrtOverlay(Graphics2D g2d, int width, int height) {
+        if (crtOverlayBuffer == null || crtOverlayBuffer.getWidth() != width || crtOverlayBuffer.getHeight() != height) {
+            crtOverlayBuffer = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D overlayG = crtOverlayBuffer.createGraphics();
+            overlayG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+            overlayG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            overlayG.setComposite(AlphaComposite.Src);
+            overlayG.setColor(new Color(0, 0, 0, 0));
+            overlayG.fillRect(0, 0, width, height);
+            drawCrtGlow(overlayG, width, height);
+            drawCrtMask(overlayG, width, height);
+            if (crtScanlinesEnabled) {
+                drawCrtScanlines(overlayG, width, height);
+            }
+            drawCrtVignette(overlayG, width, height);
+            overlayG.dispose();
         }
+        g2d.drawImage(crtOverlayBuffer, 0, 0, null);
+    }
+
+    private void drawCrtGlow(Graphics2D g2d, int width, int height) {
+        Composite oldComposite = g2d.getComposite();
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.12f));
+        g2d.setColor(new Color(120, 220, 255, 255));
+        g2d.fillRect(0, 0, width, height);
+        g2d.setComposite(oldComposite);
+    }
+
+    private void drawCrtMask(Graphics2D g2d, int width, int height) {
+        for (int x = 0; x < width; x += 3) {
+            g2d.setColor(new Color(255, 70, 70, 16));
+            g2d.drawLine(x, 0, x, height);
+            if (x + 1 < width) {
+                g2d.setColor(new Color(120, 255, 120, 14));
+                g2d.drawLine(x + 1, 0, x + 1, height);
+            }
+            if (x + 2 < width) {
+                g2d.setColor(new Color(110, 190, 255, 16));
+                g2d.drawLine(x + 2, 0, x + 2, height);
+            }
+        }
+    }
+
+    private void drawCrtScanlines(Graphics2D g2d, int width, int height) {
+        for (int y = 0; y < height; y += 3) {
+            g2d.setColor(new Color(0, 6, 16, 78));
+            g2d.fillRect(0, y, width, 1);
+        }
+        for (int y = 1; y < height; y += 6) {
+            g2d.setColor(new Color(140, 220, 255, 18));
+            g2d.drawLine(0, y, width, y);
+        }
+    }
+
+    private void drawCrtVignette(Graphics2D g2d, int width, int height) {
+        float centerX = width / 2.0f;
+        float centerY = height / 2.0f;
+        float radius = Math.max(width, height) * 0.72f;
+        RadialGradientPaint vignette = new RadialGradientPaint(
+                centerX,
+                centerY,
+                radius,
+                new float[]{0.0f, 0.72f, 1.0f},
+                new Color[]{
+                        new Color(0, 0, 0, 0),
+                        new Color(0, 0, 0, 35),
+                        new Color(0, 0, 0, 130)
+                }
+        );
+        g2d.setPaint(vignette);
+        g2d.fillRect(0, 0, width, height);
+        drawCrtCornerCurve(g2d, width, height);
+    }
+
+    private void drawCrtCornerCurve(Graphics2D g2d, int width, int height) {
+        int arc = Math.max(36, Math.min(width, height) / 7);
+        Area outer = new Area(new Rectangle(0, 0, width, height));
+        Area inner = new Area(new RoundRectangle2D.Double(3, 3, width - 6.0, height - 6.0, arc, arc));
+        outer.subtract(inner);
+        g2d.setColor(new Color(0, 0, 0, 150));
+        g2d.fill(outer);
+
+        g2d.setColor(new Color(170, 240, 255, 22));
+        g2d.draw(new RoundRectangle2D.Double(2, 2, width - 5.0, height - 5.0, arc, arc));
     }
 
     private void drawSoul(Graphics2D g2d, int x, int y, int size, Color color) {
@@ -1640,6 +2465,23 @@ public class GamePanel extends JPanel implements ActionListener {
     ) {
         FontMetrics metrics = g2d.getFontMetrics();
         int x = centerX - (metrics.stringWidth(text) / 2);
+        g2d.setColor(new Color(glow.getRed(), glow.getGreen(), glow.getBlue(), Math.min(220, glow.getAlpha())));
+        g2d.drawString(text, x + 1, baselineY);
+        g2d.drawString(text, x - 1, baselineY);
+        g2d.drawString(text, x, baselineY + 1);
+        g2d.drawString(text, x, baselineY - 1);
+        g2d.setColor(core);
+        g2d.drawString(text, x, baselineY);
+    }
+
+    private void drawGlowingString(
+            Graphics2D g2d,
+            String text,
+            int x,
+            int baselineY,
+            Color core,
+            Color glow
+    ) {
         g2d.setColor(new Color(glow.getRed(), glow.getGreen(), glow.getBlue(), Math.min(220, glow.getAlpha())));
         g2d.drawString(text, x + 1, baselineY);
         g2d.drawString(text, x - 1, baselineY);
