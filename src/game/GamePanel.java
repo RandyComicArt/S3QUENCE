@@ -101,6 +101,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final long MENU_TRANSITION_SWITCH_MS = MENU_TRANSITION_MS / 2;
     private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
     private static final double TIMER_REFILL_ANIM_PER_SECOND = 3600.0;
+    private static final long SHOP_DIALOGUE_FADE_IN_MS = 320L;
+    private static final long SHOP_DIALOGUE_FADE_OUT_MS = 260L;
+    private static final long SHOP_DIALOGUE_ADVANCE_DELAY_MS = 2000L;
     private static final int MENU_ITEM_START = 0;
     private static final int MENU_ITEM_TEST_ENEMY = 1;
     private static final int MENU_ITEM_SETTINGS = 2;
@@ -134,7 +137,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final double CRT_VERTICAL_CURVE_STRENGTH = 0.04;
     private static final int CRT_WARP_STRIP_PX = 2;
     private static final boolean DEFAULT_CRT_COLOR_BLEED = true;
-    private static final int DEFAULT_RENDER_QUALITY_INDEX = 1;
+    private static final int DEFAULT_RENDER_QUALITY_INDEX = 0;
     private static final int DEFAULT_BRIGHTNESS_INDEX = 12;
     private static final int CRT_BLEED_OFFSET_X = 2;
     private static final int CRT_BLEED_OFFSET_Y = 1;
@@ -165,6 +168,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage halfHeartSprite;
     private BufferedImage emptyHeartSprite;
     private BufferedImage megamanTransitionSprite;
+    private BufferedImage shopDialogueSprite;
+    private BufferedImage shopDialogueSprite2;
     private BufferedImage sceneBuffer;
     private BufferedImage crtWarpBuffer;
     private BufferedImage crtOverlayBuffer;
@@ -229,6 +234,21 @@ public class GamePanel extends JPanel implements ActionListener {
     private float crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[DEFAULT_BRIGHTNESS_INDEX];
     private float lastCrtBrightnessGain = -1f;
     private int aspectModeIndex = 0;
+    private ShopDialogueState shopDialogueState = ShopDialogueState.NONE;
+    private long shopDialogueFadeStartMs;
+    private float shopDialogueAlpha;
+    private boolean shopDialogueAdvanceQueued;
+    private int shopDialoguePageIndex;
+    private int shopDialoguePageCount;
+    private int shopDialoguePendingIndex = -1;
+    private long shopDialogueAdvanceStartMs;
+
+    private enum ShopDialogueState {
+        NONE,
+        FADING_IN,
+        VISIBLE,
+        FADING_OUT
+    }
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -297,6 +317,7 @@ public class GamePanel extends JPanel implements ActionListener {
         drawCurvedScreenMatte(gameG, renderWidth, renderHeight);
 
         gameG.dispose();
+        drawShopDialogueOverlayPostCrt(g2d, panelWidth, panelHeight);
         g2d.dispose();
     }
 
@@ -595,6 +616,7 @@ public class GamePanel extends JPanel implements ActionListener {
         updateBackgroundMusic();
         backdropEffects.update();
         updateEnemyKillEffects();
+        updateShopDialogue();
         repaint();
     }
 
@@ -1099,6 +1121,80 @@ public class GamePanel extends JPanel implements ActionListener {
         drawCenteredString(g2d, "ENTER BUY  |  ESC LEAVE", GameConfig.WIDTH / 2, y + h - 26);
     }
 
+    private void drawShopDialogueOverlayPostCrt(Graphics2D g2d, int panelWidth, int panelHeight) {
+        if (!isShopDialogueActive()) {
+            return;
+        }
+        BufferedImage dialogueSprite = getShopDialoguePage(shopDialoguePageIndex);
+        if (dialogueSprite == null || shopDialogueAlpha <= 0f) {
+            return;
+        }
+        Graphics2D overlayG = (Graphics2D) g2d.create(0, 0, panelWidth, panelHeight);
+        Composite oldComposite = g2d.getComposite();
+
+        double eased = easeInOut(shopDialogueAlpha);
+        int maxBarHeight = Math.max(24, (int) Math.round(panelHeight * 0.08));
+        int barHeight = (int) Math.round(maxBarHeight * eased);
+        int innerY = maxBarHeight;
+        int innerH = Math.max(1, panelHeight - (maxBarHeight * 2));
+
+        overlayG.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, shopDialogueAlpha * 0.35f));
+        overlayG.setColor(new Color(0, 0, 0, 255));
+        overlayG.fillRect(0, 0, panelWidth, panelHeight);
+
+        overlayG.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, shopDialogueAlpha));
+        overlayG.drawImage(dialogueSprite, 0, innerY, panelWidth, innerH, null);
+        drawDialogueCrtAccent(overlayG, panelWidth, innerY, innerH, shopDialogueAlpha);
+        drawDialogueAdvanceHint(overlayG, panelWidth, innerY, innerH, shopDialogueAlpha);
+
+        overlayG.setComposite(AlphaComposite.SrcOver);
+        overlayG.setColor(Color.BLACK);
+        if (barHeight > 0) {
+            overlayG.fillRect(0, 0, panelWidth, barHeight);
+            overlayG.fillRect(0, panelHeight - barHeight, panelWidth, barHeight);
+        }
+
+        overlayG.setComposite(oldComposite);
+        overlayG.dispose();
+    }
+
+    private void drawDialogueCrtAccent(Graphics2D g2d, int width, int innerY, int innerH, float alpha) {
+        float lineAlpha = Math.min(0.22f, alpha * 0.22f);
+        if (lineAlpha > 0f) {
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, lineAlpha));
+            for (int y = innerY; y < innerY + innerH; y += 4) {
+                g2d.setColor(new Color(0, 0, 0, 255));
+                g2d.drawLine(0, y, width, y);
+            }
+        }
+
+        float highlightAlpha = Math.min(0.12f, alpha * 0.12f);
+        if (highlightAlpha > 0f) {
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, highlightAlpha));
+            g2d.setColor(new Color(140, 220, 255, 255));
+            for (int y = innerY + 1; y < innerY + innerH; y += 8) {
+                g2d.drawLine(0, y, width, y);
+            }
+        }
+
+        float glowAlpha = Math.min(0.35f, alpha * 0.35f);
+        if (glowAlpha > 0f) {
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, glowAlpha));
+            Stroke oldStroke = g2d.getStroke();
+            g2d.setStroke(new BasicStroke(2f));
+            g2d.setColor(new Color(94, 245, 255, 160));
+            g2d.drawRect(6, innerY + 6, width - 12, innerH - 12);
+            g2d.setStroke(oldStroke);
+        }
+
+        g2d.setComposite(AlphaComposite.SrcOver);
+    }
+
+    private double easeInOut(double value) {
+        double clamped = Math.max(0.0, Math.min(1.0, value));
+        return clamped * clamped * (3.0 - (2.0 * clamped));
+    }
+
     private void setupKeyBindings() {
         bindDirection("UP", Direction.UP);
         bindDirection("DOWN", Direction.DOWN);
@@ -1120,7 +1216,9 @@ public class GamePanel extends JPanel implements ActionListener {
                 } else if (screen == ScreenState.SETTINGS) {
                     activateSelectedSettingsItem();
                 } else if (screen == ScreenState.SHOP) {
-                    purchaseSelectedShopItem();
+                    if (!isShopDialogueActive()) {
+                        purchaseSelectedShopItem();
+                    }
                 } else if (screen == ScreenState.LOST) {
                     startRun();
                 }
@@ -1132,7 +1230,9 @@ public class GamePanel extends JPanel implements ActionListener {
             @Override
             public void actionPerformed(ActionEvent e) {
                 if (screen == ScreenState.SHOP) {
-                    closeShop();
+                    if (!isShopDialogueActive()) {
+                        closeShop();
+                    }
                 } else if (screen == ScreenState.SETTINGS) {
                     screen = ScreenState.MENU;
                 } else if (screen != ScreenState.MENU && !menuTransitionActive) {
@@ -1160,7 +1260,13 @@ public class GamePanel extends JPanel implements ActionListener {
                     return;
                 }
                 if (screen == ScreenState.SHOP && !menuTransitionActive) {
-                    handleShopDirection(direction);
+                    if (isShopDialogueActive()) {
+                        if (direction == Direction.RIGHT) {
+                            requestShopDialogueAdvance();
+                        }
+                    } else {
+                        handleShopDirection(direction);
+                    }
                     return;
                 }
                 if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive) {
@@ -1296,7 +1402,7 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private boolean shouldSpawnShopInRoom() {
-        return roomNumber > 1 && (roomNumber % 3 == 0 || random.nextDouble() < 0.18);
+        return true;
     }
 
     private void placeRoomNode(EncounterNode node, int maxTries) {
@@ -1409,12 +1515,14 @@ public class GamePanel extends JPanel implements ActionListener {
         clearMovementInput();
         screen = ScreenState.SHOP;
         shopSelectionIndex = 0;
+        startShopDialogue();
     }
 
     private void closeShop() {
         if (screen == ScreenState.SHOP) {
             screen = ScreenState.DUNGEON;
             clearMovementInput();
+            resetShopDialogue();
         }
     }
 
@@ -1918,6 +2026,144 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void loadTransitionSprites() {
         megamanTransitionSprite = loadImage("megaman.png");
+        shopDialogueSprite = loadImage("dialogue.png");
+        shopDialogueSprite2 = loadImage("dialogue2.png");
+        refreshShopDialoguePageCount();
+    }
+
+    private void startShopDialogue() {
+        refreshShopDialoguePageCount();
+        if (shopDialoguePageCount <= 0) {
+            resetShopDialogue();
+            return;
+        }
+        shopDialoguePageIndex = 0;
+        shopDialoguePendingIndex = -1;
+        shopDialogueAdvanceStartMs = System.currentTimeMillis();
+        shopDialogueState = ShopDialogueState.FADING_IN;
+        shopDialogueFadeStartMs = System.currentTimeMillis();
+        shopDialogueAlpha = 0f;
+        shopDialogueAdvanceQueued = false;
+    }
+
+    private void requestShopDialogueAdvance() {
+        if (shopDialogueState == ShopDialogueState.NONE) {
+            return;
+        }
+        if (!isShopDialogueAdvanceReady()) {
+            return;
+        }
+        if (shopDialoguePageCount <= 0) {
+            resetShopDialogue();
+            return;
+        }
+        int nextIndex = shopDialoguePageIndex + 1;
+        int pendingIndex = nextIndex >= shopDialoguePageCount ? -1 : nextIndex;
+        if (shopDialogueState == ShopDialogueState.FADING_IN) {
+            shopDialogueAdvanceQueued = true;
+            shopDialoguePendingIndex = pendingIndex;
+            return;
+        }
+        if (shopDialogueState == ShopDialogueState.VISIBLE) {
+            shopDialoguePendingIndex = pendingIndex;
+            shopDialogueState = ShopDialogueState.FADING_OUT;
+            shopDialogueFadeStartMs = System.currentTimeMillis();
+            return;
+        }
+    }
+
+    private void resetShopDialogue() {
+        shopDialogueState = ShopDialogueState.NONE;
+        shopDialogueAlpha = 0f;
+        shopDialogueAdvanceQueued = false;
+        shopDialoguePageIndex = 0;
+        shopDialoguePageCount = 0;
+        shopDialoguePendingIndex = -1;
+        shopDialogueAdvanceStartMs = 0L;
+    }
+
+    private boolean isShopDialogueActive() {
+        return shopDialogueState != ShopDialogueState.NONE;
+    }
+
+    private void updateShopDialogue() {
+        if (screen != ScreenState.SHOP) {
+            if (shopDialogueState != ShopDialogueState.NONE) {
+                resetShopDialogue();
+            }
+            return;
+        }
+        if (shopDialogueState == ShopDialogueState.NONE) {
+            return;
+        }
+
+        long elapsedMs = System.currentTimeMillis() - shopDialogueFadeStartMs;
+        if (shopDialogueState == ShopDialogueState.FADING_IN) {
+            double progress = elapsedMs / (double) SHOP_DIALOGUE_FADE_IN_MS;
+            if (progress >= 1.0) {
+                shopDialogueAlpha = 1f;
+                shopDialogueState = ShopDialogueState.VISIBLE;
+                if (shopDialogueAdvanceQueued) {
+                    shopDialogueAdvanceQueued = false;
+                    shopDialogueState = ShopDialogueState.FADING_OUT;
+                    shopDialogueFadeStartMs = System.currentTimeMillis();
+                }
+            } else {
+                shopDialogueAlpha = (float) Math.max(0.0, Math.min(1.0, progress));
+            }
+            return;
+        }
+
+        if (shopDialogueState == ShopDialogueState.VISIBLE) {
+            shopDialogueAlpha = 1f;
+            return;
+        }
+
+        if (shopDialogueState == ShopDialogueState.FADING_OUT) {
+            double progress = elapsedMs / (double) SHOP_DIALOGUE_FADE_OUT_MS;
+            if (progress >= 1.0) {
+                if (shopDialoguePendingIndex >= 0) {
+                    shopDialoguePageIndex = shopDialoguePendingIndex;
+                    shopDialoguePendingIndex = -1;
+                    shopDialogueAdvanceStartMs = System.currentTimeMillis();
+                    shopDialogueState = ShopDialogueState.FADING_IN;
+                    shopDialogueFadeStartMs = System.currentTimeMillis();
+                    shopDialogueAlpha = 0f;
+                    shopDialogueAdvanceQueued = false;
+                } else {
+                    resetShopDialogue();
+                }
+            } else {
+                shopDialogueAlpha = (float) Math.max(0.0, Math.min(1.0, 1.0 - progress));
+            }
+        }
+    }
+
+    private void refreshShopDialoguePageCount() {
+        int count = 0;
+        if (shopDialogueSprite != null) {
+            count++;
+        }
+        if (shopDialogueSprite2 != null) {
+            count++;
+        }
+        shopDialoguePageCount = count;
+    }
+
+    private BufferedImage getShopDialoguePage(int index) {
+        int i = 0;
+        if (shopDialogueSprite != null) {
+            if (i == index) {
+                return shopDialogueSprite;
+            }
+            i++;
+        }
+        if (shopDialogueSprite2 != null) {
+            if (i == index) {
+                return shopDialogueSprite2;
+            }
+        }
+        return null;
     }
 
     private void drawHeartHud(Graphics2D g2d) {
@@ -2365,6 +2611,64 @@ public class GamePanel extends JPanel implements ActionListener {
             overlayG.dispose();
         }
         g2d.drawImage(crtOverlayBuffer, 0, 0, null);
+    }
+
+    private void drawDialogueAdvanceHint(Graphics2D g2d, int width, int innerY, int innerH, float alpha) {
+        if (shopDialogueState == ShopDialogueState.NONE) {
+            return;
+        }
+        int barWidth = 240;
+        int barHeight = 8;
+        int barX = (width - barWidth) / 2;
+        int barY = innerY + innerH - 28;
+        float hintAlpha = Math.min(0.9f, alpha);
+
+        double progress = getShopDialogueAdvanceProgress();
+        if (progress < 1.0) {
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, hintAlpha * 0.65f));
+            g2d.setColor(new Color(255, 255, 255, 70));
+            g2d.fillRect(barX, barY, barWidth, barHeight);
+            g2d.setColor(new Color(255, 255, 255, 200));
+            g2d.fillRect(barX, barY, (int) Math.round(barWidth * progress), barHeight);
+            g2d.setComposite(AlphaComposite.SrcOver);
+            return;
+        }
+
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, hintAlpha));
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(WHITE);
+        String left = "PRESS";
+        String right = "TO ADVANCE";
+        FontMetrics metrics = g2d.getFontMetrics();
+        int iconSize = 18;
+        int gap = 8;
+        int totalWidth = metrics.stringWidth(left) + gap + iconSize + gap + metrics.stringWidth(right);
+        int textX = (width - totalWidth) / 2;
+        int baselineY = innerY + innerH - 18;
+
+        g2d.drawString(left, textX, baselineY);
+        int iconX = textX + metrics.stringWidth(left) + gap;
+        int iconY = baselineY - iconSize + 2;
+        BufferedImage arrow = arrowSprites.get(Direction.RIGHT);
+        if (arrow != null) {
+            g2d.drawImage(arrow, iconX, iconY, iconSize, iconSize, null);
+        } else {
+            drawArrow(g2d, Direction.RIGHT, iconX, iconY, iconSize, WHITE);
+        }
+        g2d.drawString(right, iconX + iconSize + gap, baselineY);
+        g2d.setComposite(AlphaComposite.SrcOver);
+    }
+
+    private double getShopDialogueAdvanceProgress() {
+        if (shopDialogueAdvanceStartMs <= 0L) {
+            return 1.0;
+        }
+        long elapsed = System.currentTimeMillis() - shopDialogueAdvanceStartMs;
+        return Math.max(0.0, Math.min(1.0, elapsed / (double) SHOP_DIALOGUE_ADVANCE_DELAY_MS));
+    }
+
+    private boolean isShopDialogueAdvanceReady() {
+        return getShopDialogueAdvanceProgress() >= 1.0;
     }
 
     private void drawCrtGlow(Graphics2D g2d, int width, int height) {
