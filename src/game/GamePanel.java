@@ -64,7 +64,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final Color ARENA_GLASS = new Color(2, 10, 24, 102);
     private static final Color ROOM_GLASS = new Color(4, 18, 40, 90);
     private static final String MENU_MUSIC_FILE = "main_menu.wav";
-    private static final String GAMEPLAY_MUSIC_FILE = "Loop_drum.wav";
+    private static final String DUNGEON_MUSIC_FILE = "Loop_drum.wav";
+    private static final String[] ENCOUNTER_MUSIC_FILES = {"guitar_loop.wav", "guitar_loop2.wav", "guitar_loop3.wav"};
+    private static final String SHOP_MUSIC_FILE = "shop_loop.wav";
 
     private static final Font TITLE_FONT = new Font("Monospaced", Font.BOLD, 40);
     private static final Font HUD_FONT = new Font("Monospaced", Font.BOLD, 24);
@@ -77,9 +79,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int ARENA_W = GameConfig.WIDTH - 240;
     private static final int ARENA_H = 420;
     private static final int ENCOUNTER_ARENA_Y = 170;
-    private static final int ENEMY_BAR_X = ARENA_X + 150;
-    private static final int ENEMY_BAR_W = ARENA_W - 300;
-    private static final int ENEMY_BAR_H = 22;
+    private static final int ENEMY_BAR_X = ARENA_X + 50;
+    private static final int ENEMY_BAR_W = ARENA_W - 100;
+    private static final int ENEMY_BAR_H = 50;
 
     private static final int ROOM_X = ARENA_X + 35;
     private static final int ROOM_Y = ARENA_Y + 40;
@@ -93,7 +95,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final long ENCOUNTER_TRANSITION_MS = 1280L;
     private static final long ENCOUNTER_TRANSITION_HOLD_MS = 360L;
     private static final long ENCOUNTER_INTRO_MS = 360L;
-    private static final long ROOM_TRANSITION_MS = 720L;
+    private static final long ROOM_TRANSITION_MS = 900L;
     private static final long ROOM_TRANSITION_HOLD_MS = 180L;
     private static final long ROOM_INTRO_MS = 360L;
     private static final long RUN_START_FADE_IN_MS = 1000L;
@@ -101,19 +103,23 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final long MENU_TRANSITION_SWITCH_MS = MENU_TRANSITION_MS / 2;
     private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
     private static final double TIMER_REFILL_ANIM_PER_SECOND = 3600.0;
-    private static final long SHOP_DIALOGUE_FADE_IN_MS = 320L;
-    private static final long SHOP_DIALOGUE_FADE_OUT_MS = 260L;
-    private static final long SHOP_DIALOGUE_ADVANCE_DELAY_MS = 2000L;
     private static final int MENU_ITEM_START = 0;
     private static final int MENU_ITEM_TEST_ENEMY = 1;
     private static final int MENU_ITEM_SETTINGS = 2;
     private static final int MENU_ITEM_COUNT = 3;
-    private static final int SETTINGS_ITEM_RENDER_QUALITY = 0;
-    private static final int SETTINGS_ITEM_CRT_BLEED = 1;
-    private static final int SETTINGS_ITEM_CRT_BRIGHTNESS = 2;
-    private static final int SETTINGS_ITEM_ASPECT = 3;
-    private static final int SETTINGS_ITEM_BACK = 4;
-    private static final int SETTINGS_ITEM_COUNT = 5;
+    private static final int SETTINGS_TAB_VIDEO = 0;
+    private static final int SETTINGS_TAB_AUDIO = 1;
+    private static final int SETTINGS_ITEM_TAB = 0;
+    private static final int SETTINGS_VIDEO_RENDER_QUALITY = 1;
+    private static final int SETTINGS_VIDEO_CRT_BRIGHTNESS = 2;
+    private static final int SETTINGS_VIDEO_ASPECT = 3;
+    private static final int SETTINGS_VIDEO_BACK = 4;
+    private static final int SETTINGS_VIDEO_ITEM_COUNT = 5;
+    private static final int SETTINGS_AUDIO_MASTER = 1;
+    private static final int SETTINGS_AUDIO_MUSIC = 2;
+    private static final int SETTINGS_AUDIO_SFX = 3;
+    private static final int SETTINGS_AUDIO_BACK = 4;
+    private static final int SETTINGS_AUDIO_ITEM_COUNT = 5;
     private static final int SHOP_ITEM_COUNT = 3;
     private static final int MAX_HEARTS = 3;
     private static final int MAX_HEALTH_UNITS = MAX_HEARTS * 2;
@@ -128,17 +134,24 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final String[] RENDER_QUALITY_LABELS = {"PERFORMANCE", "BALANCED", "CLARITY"};
     private static final String[] ASPECT_MODE_LABELS = {"ORIGINAL", "FILL"};
     private static final float[] CRT_BRIGHTNESS_LEVELS = {
-            0.50f, 0.60f, 0.70f, 0.80f, 0.90f,
-            1.00f, 1.10f, 1.20f, 1.30f, 1.40f,
-            1.50f, 1.60f, 1.70f, 1.80f, 1.90f,
-            2.00f, 2.10f
+            0.50f, 0.6786f, 0.8571f, 1.0357f, 1.2143f,
+            1.3929f, 1.5714f, 1.7500f, 1.9286f, 2.1071f,
+            2.2857f, 2.4643f, 2.6429f, 2.8214f, 3.00f
+    };
+    private static final float[] VOLUME_LEVELS = {
+            0.0f, 0.1f, 0.2f, 0.3f, 0.4f,
+            0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+            1.0f
     };
     private static final double CRT_WARP_STRENGTH = 0.085;
     private static final double CRT_VERTICAL_CURVE_STRENGTH = 0.04;
     private static final int CRT_WARP_STRIP_PX = 2;
     private static final boolean DEFAULT_CRT_COLOR_BLEED = true;
     private static final int DEFAULT_RENDER_QUALITY_INDEX = 0;
-    private static final int DEFAULT_BRIGHTNESS_INDEX = 12;
+    private static final int DEFAULT_BRIGHTNESS_INDEX = 9;
+    private static final int DEFAULT_MASTER_VOLUME_INDEX = 10;
+    private static final int DEFAULT_MUSIC_VOLUME_INDEX = 10;
+    private static final int DEFAULT_SFX_VOLUME_INDEX = 10;
     private static final int CRT_BLEED_OFFSET_X = 2;
     private static final int CRT_BLEED_OFFSET_Y = 1;
     private static final float CRT_BLEED_INTENSITY = 0.32f;
@@ -168,8 +181,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage halfHeartSprite;
     private BufferedImage emptyHeartSprite;
     private BufferedImage megamanTransitionSprite;
-    private BufferedImage shopDialogueSprite;
-    private BufferedImage shopDialogueSprite2;
+    private BufferedImage startMenuSprite;
     private BufferedImage sceneBuffer;
     private BufferedImage crtWarpBuffer;
     private BufferedImage crtOverlayBuffer;
@@ -195,11 +207,14 @@ public class GamePanel extends JPanel implements ActionListener {
     private long encounterTransitionStartMs;
     private boolean encounterIntroActive;
     private long encounterIntroStartMs;
+    private boolean encounterBestedTransitionActive;
+    private long encounterBestedTransitionStartMs;
     private boolean roomTransitionActive;
     private long roomTransitionStartMs;
     private boolean roomIntroActive;
     private long roomIntroStartMs;
     private Direction pendingRoomEntryDirection;
+    private Direction roomIntroDirection;
     private boolean moveUpHeld;
     private boolean moveDownHeld;
     private boolean moveLeftHeld;
@@ -215,11 +230,17 @@ public class GamePanel extends JPanel implements ActionListener {
     private int lastCoinGain;
     private long lastCoinGainUntilMs;
     private String activeMusicFile;
+    private String encounterMusicFile = ENCOUNTER_MUSIC_FILES[0];
     private long displayedTimerMs = -1L;
     private long displayedTimerDurationMs = 1L;
     private int playerHealthUnits = MAX_HEALTH_UNITS;
     private int menuSelectionIndex = MENU_ITEM_START;
-    private int settingsSelectionIndex = SETTINGS_ITEM_RENDER_QUALITY;
+    private double menuStartHoverProgress;
+    private double settingsRevealProgress;
+    private double encounterMusicMix;
+    private double shopMusicFade;
+    private int settingsSelectionIndex = SETTINGS_VIDEO_RENDER_QUALITY;
+    private int settingsTabIndex = SETTINGS_TAB_VIDEO;
     private int shopSelectionIndex;
     private long mistakeGuardCharges;
     private long nextEncounterTimeBonusMs;
@@ -234,21 +255,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private float crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[DEFAULT_BRIGHTNESS_INDEX];
     private float lastCrtBrightnessGain = -1f;
     private int aspectModeIndex = 0;
-    private ShopDialogueState shopDialogueState = ShopDialogueState.NONE;
-    private long shopDialogueFadeStartMs;
-    private float shopDialogueAlpha;
-    private boolean shopDialogueAdvanceQueued;
-    private int shopDialoguePageIndex;
-    private int shopDialoguePageCount;
-    private int shopDialoguePendingIndex = -1;
-    private long shopDialogueAdvanceStartMs;
-
-    private enum ShopDialogueState {
-        NONE,
-        FADING_IN,
-        VISIBLE,
-        FADING_OUT
-    }
+    private int masterVolumeIndex = DEFAULT_MASTER_VOLUME_INDEX;
+    private int musicVolumeIndex = DEFAULT_MUSIC_VOLUME_INDEX;
+    private int sfxVolumeIndex = DEFAULT_SFX_VOLUME_INDEX;
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -257,8 +266,10 @@ public class GamePanel extends JPanel implements ActionListener {
         loadArrowSprites();
         loadHeartSprites();
         loadTransitionSprites();
+        loadMenuSprites();
         setupMovementDispatcher();
         setupKeyBindings();
+        applyAudioVolumes();
         updateBackgroundMusic();
         timer = new Timer(16, this); // ~60 FPS
         timer.start();
@@ -317,7 +328,6 @@ public class GamePanel extends JPanel implements ActionListener {
         drawCurvedScreenMatte(gameG, renderWidth, renderHeight);
 
         gameG.dispose();
-        drawShopDialogueOverlayPostCrt(g2d, panelWidth, panelHeight);
         g2d.dispose();
     }
 
@@ -347,6 +357,9 @@ public class GamePanel extends JPanel implements ActionListener {
             drawDungeon(gameG);
             if (screen == ScreenState.SHOP) {
                 drawShopOverlay(gameG);
+            }
+            if (encounterBestedTransitionActive) {
+                drawEncounterBestedTransition(gameG);
             }
         } else {
             drawArena(gameG);
@@ -563,7 +576,11 @@ public class GamePanel extends JPanel implements ActionListener {
         if (menuTransitionActive) {
             updateMenuTransition();
         } else {
-            if (screen == ScreenState.DUNGEON && !encounterTransitionActive && !roomTransitionActive && !roomIntroActive) {
+            if (screen == ScreenState.DUNGEON
+                    && !encounterTransitionActive
+                    && !encounterBestedTransitionActive
+                    && !roomTransitionActive
+                    && !roomIntroActive) {
                 updateDungeonMovement(deltaSeconds);
             }
             if (encounterTransitionActive) {
@@ -579,6 +596,12 @@ public class GamePanel extends JPanel implements ActionListener {
                     screen = ScreenState.ENCOUNTER;
                     encounterIntroActive = true;
                     encounterIntroStartMs = System.currentTimeMillis();
+                }
+            }
+            if (encounterBestedTransitionActive) {
+                long elapsedMs = System.currentTimeMillis() - encounterBestedTransitionStartMs;
+                if (elapsedMs >= ENCOUNTER_TRANSITION_MS + ENCOUNTER_TRANSITION_HOLD_MS + ENCOUNTER_INTRO_MS) {
+                    encounterBestedTransitionActive = false;
                 }
             }
             if (roomTransitionActive) {
@@ -600,6 +623,7 @@ public class GamePanel extends JPanel implements ActionListener {
                 long introElapsedMs = System.currentTimeMillis() - roomIntroStartMs;
                 if (introElapsedMs >= ROOM_INTRO_MS) {
                     roomIntroActive = false;
+                    roomIntroDirection = null;
                 }
             }
             if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && roundManager.hasTimedOut()) {
@@ -612,104 +636,218 @@ public class GamePanel extends JPanel implements ActionListener {
                 runStartFadeInActive = false;
             }
         }
+        updateMenuHoverAnimation(deltaSeconds);
+        updateSettingsRevealAnimation(deltaSeconds);
+        updateEncounterMusicMix(deltaSeconds);
+        updateShopMusicFade(deltaSeconds);
         updateTimerBarAnimation(deltaSeconds);
         updateBackgroundMusic();
         backdropEffects.update();
         updateEnemyKillEffects();
-        updateShopDialogue();
         repaint();
     }
 
     private void drawMenu(Graphics2D g2d) {
-        int boxX = 110;
-        int boxY = 150;
-        int boxW = GameConfig.WIDTH - 220;
-        int boxH = GameConfig.HEIGHT - 250;
+        int menuLeft = 70;
+        int baseMenuStartY = GameConfig.HEIGHT - 150;
+        int menuLift = (int) Math.round(300 * easeInOut(settingsRevealProgress));
+        int menuStartY = baseMenuStartY - menuLift;
+        int menuLineStep = 42;
 
-        g2d.setColor(new Color(4, 15, 36, 220));
-        g2d.fillRect(boxX + 2, boxY + 2, boxW - 3, boxH - 3);
-        drawFrame(g2d, boxX, boxY, boxW, boxH, 4, WHITE);
-
-        g2d.setFont(TITLE_FONT);
-        drawGlowingCenteredString(g2d, "* S3QUENCE *", GameConfig.WIDTH / 2, boxY + 90, WHITE, GLOW_CYAN);
-
-        g2d.setFont(BODY_FONT);
-        g2d.setColor(TEXT_DIM);
-        drawCenteredString(g2d, "Arrows Edition", GameConfig.WIDTH / 2, boxY + 145);
-        drawCenteredString(g2d, "Use Arrow Keys in Encounters", GameConfig.WIDTH / 2, boxY + 206);
-
-        drawMenuOption(g2d, MENU_ITEM_START, "START RUN", GameConfig.WIDTH / 2, boxY + 265);
+        drawMenuOption(g2d, MENU_ITEM_START, "START GAME", menuLeft, menuStartY);
         drawMenuOption(
                 g2d,
                 MENU_ITEM_TEST_ENEMY,
                 "TEST ENEMY: " + getTestEnemyMenuLabel(),
-                GameConfig.WIDTH / 2,
-                boxY + 305
+                menuLeft,
+                menuStartY + menuLineStep
         );
-        drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", GameConfig.WIDTH / 2, boxY + 345);
-
-        g2d.setFont(SMALL_FONT);
-        g2d.setColor(TEXT_DIM);
-        drawCenteredString(g2d, "UP/DOWN SELECT  |  LEFT/RIGHT CHANGE", GameConfig.WIDTH / 2, boxY + boxH - 58);
-        drawCenteredString(g2d, "ENTER CONFIRM  |  ESC MENU", GameConfig.WIDTH / 2, boxY + boxH - 30);
+        drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", menuLeft, menuStartY + (menuLineStep * 2));
     }
 
     private void drawSettingsMenu(Graphics2D g2d) {
-        int boxX = 110;
-        int boxY = 130;
-        int boxW = GameConfig.WIDTH - 220;
-        int boxH = GameConfig.HEIGHT - 210;
+        int menuLeft = 70;
+        int menuLineStep = 42;
+        int baseMenuStartY = GameConfig.HEIGHT - 150;
+        double eased = easeInOut(settingsRevealProgress);
+        int menuLift = (int) Math.round(300 * eased);
+        int menuStartY = baseMenuStartY - menuLift;
 
-        g2d.setColor(new Color(4, 15, 36, 220));
-        g2d.fillRect(boxX + 2, boxY + 2, boxW - 3, boxH - 3);
-        drawFrame(g2d, boxX, boxY, boxW, boxH, 4, WHITE);
+        drawMenuOption(g2d, MENU_ITEM_START, "START GAME", menuLeft, menuStartY);
+        drawMenuOption(
+                g2d,
+                MENU_ITEM_TEST_ENEMY,
+                "TEST ENEMY: " + getTestEnemyMenuLabel(),
+                menuLeft,
+                menuStartY + menuLineStep
+        );
+        drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", menuLeft, menuStartY + (menuLineStep * 2));
 
-        g2d.setFont(TITLE_FONT);
-        drawGlowingCenteredString(g2d, "SETTINGS", GameConfig.WIDTH / 2, boxY + 80, WHITE, GLOW_CYAN);
+        int settingsLeft = menuLeft;
+        int settingsStartY = menuStartY + (menuLineStep * 3) + 30;
+        int settingsLineStep = 44;
+        int revealOffset = (int) Math.round(28 * (1.0 - eased));
+        float alpha = (float) Math.max(0.0, Math.min(1.0, eased));
+        int lineY = settingsStartY + revealOffset;
 
-        int lineY = boxY + 150;
-        int lineStep = 42;
-        drawSettingsOption(g2d, SETTINGS_ITEM_RENDER_QUALITY, "RENDER QUALITY", getRenderQualityLabel(), lineY);
-        lineY += lineStep;
-        drawSettingsOption(g2d, SETTINGS_ITEM_CRT_BLEED, "CRT BLEED", getCrtBleedLabel(), lineY);
-        lineY += lineStep;
-        drawSettingsBrightness(g2d, SETTINGS_ITEM_CRT_BRIGHTNESS, lineY);
-        lineY += lineStep;
-        drawSettingsOption(g2d, SETTINGS_ITEM_ASPECT, "ASPECT RATIO", getAspectLabel(), lineY);
-        lineY += lineStep;
-        drawSettingsOption(g2d, SETTINGS_ITEM_BACK, "BACK", "", lineY);
-
-        g2d.setFont(SMALL_FONT);
-        g2d.setColor(TEXT_DIM);
-        drawCenteredString(g2d, "UP/DOWN SELECT  |  LEFT/RIGHT CHANGE", GameConfig.WIDTH / 2, boxY + boxH - 58);
-        drawCenteredString(g2d, "ENTER TOGGLE  |  ESC BACK", GameConfig.WIDTH / 2, boxY + boxH - 30);
+        drawSettingsOption(g2d, SETTINGS_ITEM_TAB, "TAB", getSettingsTabLabel(), settingsLeft, lineY, alpha);
+        lineY += settingsLineStep;
+        if (settingsTabIndex == SETTINGS_TAB_VIDEO) {
+            drawSettingsOption(g2d, SETTINGS_VIDEO_RENDER_QUALITY, "RENDER QUALITY", getRenderQualityLabel(), settingsLeft, lineY, alpha);
+            lineY += settingsLineStep;
+            drawSettingsBrightness(g2d, SETTINGS_VIDEO_CRT_BRIGHTNESS, settingsLeft, lineY, alpha);
+            lineY += settingsLineStep + 20;
+            drawSettingsOption(g2d, SETTINGS_VIDEO_ASPECT, "ASPECT RATIO", getAspectLabel(), settingsLeft, lineY, alpha);
+            lineY += settingsLineStep;
+            drawSettingsOption(g2d, SETTINGS_VIDEO_BACK, "BACK", "", settingsLeft, lineY, alpha);
+        } else {
+            drawSettingsVolume(g2d, SETTINGS_AUDIO_MASTER, "MASTER VOLUME", masterVolumeIndex, settingsLeft, lineY, alpha);
+            lineY += settingsLineStep + 20;
+            drawSettingsVolume(g2d, SETTINGS_AUDIO_MUSIC, "MUSIC VOLUME", musicVolumeIndex, settingsLeft, lineY, alpha);
+            lineY += settingsLineStep + 20;
+            drawSettingsVolume(g2d, SETTINGS_AUDIO_SFX, "SFX VOLUME", sfxVolumeIndex, settingsLeft, lineY, alpha);
+            lineY += settingsLineStep + 20;
+            drawSettingsOption(g2d, SETTINGS_AUDIO_BACK, "BACK", "", settingsLeft, lineY, alpha);
+        }
     }
 
-    private void drawSettingsOption(Graphics2D g2d, int optionIndex, String label, String value, int baselineY) {
+    private void drawSettingsOption(
+            Graphics2D g2d,
+            int optionIndex,
+            String label,
+            String value,
+            int leftX,
+            int baselineY,
+            float alpha
+    ) {
         boolean selected = settingsSelectionIndex == optionIndex;
         String display = value == null || value.isBlank() ? label : label + ": " + value;
-        int centerX = GameConfig.WIDTH / 2;
         g2d.setFont(BODY_FONT);
+        FontMetrics metrics = g2d.getFontMetrics();
+        int paddingX = 16;
+        int paddingY = 8;
+        int minWidth = 320;
+        int textWidth = metrics.stringWidth(display);
+        int textHeight = metrics.getAscent();
+        int rectW = Math.max(minWidth, textWidth + (paddingX * 2));
+        int rectH = textHeight + metrics.getDescent() + (paddingY * 2);
+        int rectX = leftX;
+        int rectY = baselineY - textHeight - paddingY;
+
+        Composite oldComposite = g2d.getComposite();
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        g2d.setColor(new Color(62, 124, 220, 140));
+        g2d.fillRect(rectX, rectY, rectW, rectH);
+        g2d.setColor(selected ? new Color(120, 200, 255, 200) : new Color(92, 162, 240, 160));
+        if (rectW > 4 && rectH > 4) {
+            g2d.fillRect(rectX + 2, rectY + 2, rectW - 4, rectH - 4);
+        }
+
+        int textX = rectX + paddingX;
         if (selected) {
-            drawGlowingCenteredString(g2d, "> " + display + " <", centerX, baselineY, YELLOW, GLOW_CYAN);
+            drawGlowingString(g2d, display, textX, baselineY, YELLOW, GLOW_CYAN);
         } else {
             g2d.setColor(WHITE);
-            drawCenteredString(g2d, display, centerX, baselineY);
+            g2d.drawString(display, textX, baselineY);
+        }
+        g2d.setComposite(oldComposite);
+    }
+
+    private void drawMenuOption(Graphics2D g2d, int optionIndex, String label, int leftX, int baselineY) {
+        if (optionIndex == MENU_ITEM_START && startMenuSprite != null) {
+            drawMenuStartSprite(g2d, leftX, baselineY);
+            return;
+        }
+        boolean selected = menuSelectionIndex == optionIndex;
+        g2d.setFont(BODY_FONT);
+        FontMetrics metrics = g2d.getFontMetrics();
+        int textWidth = metrics.stringWidth(label);
+        int textHeight = metrics.getAscent();
+        int paddingX = 16;
+        int paddingY = 8;
+        int rectX = leftX;
+        int rectY = baselineY - textHeight - paddingY;
+        int rectW = textWidth + (paddingX * 2);
+        int rectH = textHeight + metrics.getDescent() + (paddingY * 2);
+
+        g2d.setColor(new Color(62, 124, 220, 140));
+        g2d.fillRect(rectX, rectY, rectW, rectH);
+        g2d.setColor(selected ? new Color(120, 200, 255, 200) : new Color(92, 162, 240, 160));
+        if (rectW > 4 && rectH > 4) {
+            g2d.fillRect(rectX + 2, rectY + 2, rectW - 4, rectH - 4);
+        }
+
+        int textX = rectX + paddingX;
+        if (selected) {
+            drawGlowingString(g2d, label, textX, baselineY, YELLOW, GLOW_CYAN);
+        } else {
+            g2d.setColor(WHITE);
+            g2d.drawString(label, textX, baselineY);
         }
     }
 
-    private void drawMenuOption(Graphics2D g2d, int optionIndex, String label, int centerX, int baselineY) {
-        boolean selected = menuSelectionIndex == optionIndex;
-        g2d.setFont(BODY_FONT);
-        if (selected) {
-            drawGlowingCenteredString(g2d, "> " + label + " <", centerX, baselineY, YELLOW, GLOW_CYAN);
-        } else {
-            g2d.setColor(WHITE);
-            drawCenteredString(g2d, label, centerX, baselineY);
+    private void drawMenuStartSprite(Graphics2D g2d, int leftX, int baselineY) {
+        BufferedImage sprite = startMenuSprite;
+        if (sprite == null) {
+            return;
         }
+        double eased = easeOutCubic(menuStartHoverProgress);
+        double baseScale = 3.0;
+        double hoverScale = 3.6;
+        double scale = baseScale + ((hoverScale - baseScale) * eased);
+        int scaledW = (int) Math.round(sprite.getWidth() * scale);
+        int scaledH = (int) Math.round(sprite.getHeight() * scale);
+        int spriteX = leftX;
+        int lift = (int) Math.round(6 * eased);
+        int spriteY = baselineY - scaledH + 6 - lift;
+        Composite oldComposite = g2d.getComposite();
+        float alpha = (float) (0.65 + (0.25 * eased));
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        g2d.drawImage(sprite, spriteX, spriteY, scaledW, scaledH, null);
+        g2d.setComposite(oldComposite);
+    }
+
+    private void updateMenuHoverAnimation(double deltaSeconds) {
+        double target = (screen == ScreenState.MENU && !menuTransitionActive && menuSelectionIndex == MENU_ITEM_START)
+                ? 1.0
+                : 0.0;
+        double rate = target > menuStartHoverProgress ? 6.0 : 9.0;
+        menuStartHoverProgress = moveTowards(menuStartHoverProgress, target, rate * deltaSeconds);
+    }
+
+    private void updateSettingsRevealAnimation(double deltaSeconds) {
+        double target = screen == ScreenState.SETTINGS ? 1.0 : 0.0;
+        double rate = target > settingsRevealProgress ? 3.5 : 5.5;
+        settingsRevealProgress = moveTowards(settingsRevealProgress, target, rate * deltaSeconds);
+    }
+
+    private void updateEncounterMusicMix(double deltaSeconds) {
+        boolean enteringEncounter = encounterTransitionActive || encounterIntroActive || screen == ScreenState.ENCOUNTER;
+        double target = enteringEncounter ? 1.0 : 0.0;
+        if (encounterTransitionActive) {
+            double progress = (System.currentTimeMillis() - encounterTransitionStartMs) / (double) ENCOUNTER_TRANSITION_MS;
+            progress = Math.max(0.0, Math.min(1.0, progress));
+            encounterMusicMix = Math.max(encounterMusicMix, progress);
+        }
+        double rate = target > encounterMusicMix ? 0.7 : 0.9;
+        encounterMusicMix = moveTowards(encounterMusicMix, target, rate * deltaSeconds);
+    }
+
+    private void updateShopMusicFade(double deltaSeconds) {
+        double target = screen == ScreenState.SHOP ? 1.0 : 0.0;
+        double rate = target > shopMusicFade ? 1.8 : 3.0;
+        shopMusicFade = moveTowards(shopMusicFade, target, rate * deltaSeconds);
+    }
+
+    private double moveTowards(double current, double target, double maxDelta) {
+        if (current < target) {
+            return Math.min(target, current + maxDelta);
+        }
+        return Math.max(target, current - maxDelta);
     }
 
     private void handleMenuDirection(Direction direction) {
+        int previousIndex = menuSelectionIndex;
         if (direction == Direction.UP) {
             menuSelectionIndex = (menuSelectionIndex - 1 + MENU_ITEM_COUNT) % MENU_ITEM_COUNT;
         } else if (direction == Direction.DOWN) {
@@ -717,9 +855,14 @@ public class GamePanel extends JPanel implements ActionListener {
         } else if (menuSelectionIndex == MENU_ITEM_TEST_ENEMY) {
             if (direction == Direction.LEFT) {
                 cycleTestEnemy(-1);
+                AudioManager.playSfx("main_toggle_tab.wav");
             } else if (direction == Direction.RIGHT) {
                 cycleTestEnemy(1);
+                AudioManager.playSfx("main_toggle_tab.wav");
             }
+        }
+        if (menuSelectionIndex != previousIndex) {
+            AudioManager.playSfx("tab_switch.wav");
         }
     }
 
@@ -728,19 +871,30 @@ public class GamePanel extends JPanel implements ActionListener {
             startRun();
         } else if (menuSelectionIndex == MENU_ITEM_TEST_ENEMY) {
             cycleTestEnemy(1);
+            AudioManager.playSfx("main_toggle_tab.wav");
         } else if (menuSelectionIndex == MENU_ITEM_SETTINGS) {
-            settingsSelectionIndex = SETTINGS_ITEM_RENDER_QUALITY;
+            AudioManager.playSfx("main_toggle_tab.wav");
+            settingsTabIndex = SETTINGS_TAB_VIDEO;
+            settingsSelectionIndex = SETTINGS_VIDEO_RENDER_QUALITY;
             screen = ScreenState.SETTINGS;
         }
     }
 
     private void handleSettingsDirection(Direction direction) {
         if (direction == Direction.UP) {
-            settingsSelectionIndex = (settingsSelectionIndex - 1 + SETTINGS_ITEM_COUNT) % SETTINGS_ITEM_COUNT;
+            int previousIndex = settingsSelectionIndex;
+            settingsSelectionIndex = (settingsSelectionIndex - 1 + getSettingsItemCount()) % getSettingsItemCount();
+            if (settingsSelectionIndex != previousIndex) {
+                AudioManager.playSfx("tab_switch.wav");
+            }
             return;
         }
         if (direction == Direction.DOWN) {
-            settingsSelectionIndex = (settingsSelectionIndex + 1) % SETTINGS_ITEM_COUNT;
+            int previousIndex = settingsSelectionIndex;
+            settingsSelectionIndex = (settingsSelectionIndex + 1) % getSettingsItemCount();
+            if (settingsSelectionIndex != previousIndex) {
+                AudioManager.playSfx("tab_switch.wav");
+            }
             return;
         }
 
@@ -749,35 +903,34 @@ public class GamePanel extends JPanel implements ActionListener {
             return;
         }
 
-        if (settingsSelectionIndex == SETTINGS_ITEM_RENDER_QUALITY) {
-            renderQualityIndex = wrapIndex(renderQualityIndex + delta, RENDER_QUALITY_LABELS.length);
-            applyRenderQuality();
-        } else if (settingsSelectionIndex == SETTINGS_ITEM_CRT_BLEED) {
-            crtBleedEnabled = !crtBleedEnabled;
-        } else if (settingsSelectionIndex == SETTINGS_ITEM_CRT_BRIGHTNESS) {
-            crtBrightnessIndex = wrapIndex(crtBrightnessIndex + delta, CRT_BRIGHTNESS_LEVELS.length);
-            crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[crtBrightnessIndex];
-        } else if (settingsSelectionIndex == SETTINGS_ITEM_ASPECT) {
-            aspectModeIndex = wrapIndex(aspectModeIndex + delta, ASPECT_MODE_LABELS.length);
+        if (settingsSelectionIndex == SETTINGS_ITEM_TAB) {
+            switchSettingsTab(delta);
+            return;
+        }
+
+        if (settingsTabIndex == SETTINGS_TAB_VIDEO) {
+            handleVideoSettingsDelta(delta);
+        } else {
+            handleAudioSettingsDelta(delta);
         }
     }
 
     private void activateSelectedSettingsItem() {
-        if (settingsSelectionIndex == SETTINGS_ITEM_BACK) {
+        if (settingsSelectionIndex == SETTINGS_ITEM_TAB) {
+            switchSettingsTab(1);
+            return;
+        }
+
+        if (isSettingsBackSelected()) {
+            AudioManager.playSfx("back_toggle.wav");
             screen = ScreenState.MENU;
             return;
         }
 
-        if (settingsSelectionIndex == SETTINGS_ITEM_RENDER_QUALITY) {
-            renderQualityIndex = wrapIndex(renderQualityIndex + 1, RENDER_QUALITY_LABELS.length);
-            applyRenderQuality();
-        } else if (settingsSelectionIndex == SETTINGS_ITEM_CRT_BLEED) {
-            crtBleedEnabled = !crtBleedEnabled;
-        } else if (settingsSelectionIndex == SETTINGS_ITEM_CRT_BRIGHTNESS) {
-            crtBrightnessIndex = wrapIndex(crtBrightnessIndex + 1, CRT_BRIGHTNESS_LEVELS.length);
-            crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[crtBrightnessIndex];
-        } else if (settingsSelectionIndex == SETTINGS_ITEM_ASPECT) {
-            aspectModeIndex = wrapIndex(aspectModeIndex + 1, ASPECT_MODE_LABELS.length);
+        if (settingsTabIndex == SETTINGS_TAB_VIDEO) {
+            handleVideoSettingsDelta(1);
+        } else {
+            handleAudioSettingsDelta(1);
         }
     }
 
@@ -837,28 +990,61 @@ public class GamePanel extends JPanel implements ActionListener {
         return RENDER_QUALITY_LABELS[renderQualityIndex];
     }
 
-    private String getCrtBleedLabel() {
-        return crtBleedEnabled ? "ON" : "OFF";
-    }
-
     private String getAspectLabel() {
         return ASPECT_MODE_LABELS[aspectModeIndex];
     }
 
-    private void drawSettingsBrightness(Graphics2D g2d, int optionIndex, int baselineY) {
+    private String getEncounterMusicFile(EnemyArchetype archetype) {
+        if (archetype == null) {
+            return ENCOUNTER_MUSIC_FILES[0];
+        }
+        switch (archetype) {
+            case BERSERKER:
+                return ENCOUNTER_MUSIC_FILES[1];
+            case ECHO:
+            case REVERSE:
+                return ENCOUNTER_MUSIC_FILES[2];
+            case NORMAL:
+            default:
+                return ENCOUNTER_MUSIC_FILES[0];
+        }
+    }
+
+    private void drawSettingsBrightness(Graphics2D g2d, int optionIndex, int leftX, int baselineY, float alpha) {
         boolean selected = settingsSelectionIndex == optionIndex;
-        int centerX = GameConfig.WIDTH / 2;
-        int barWidth = 260;
+        int minBarWidth = 300;
         int barHeight = 10;
-        int barX = centerX - (barWidth / 2);
-        int barY = baselineY + 8;
+        int paddingX = 16;
+        int paddingY = 8;
+        String labelText = "BRIGHTNESS";
 
         g2d.setFont(BODY_FONT);
+        FontMetrics metrics = g2d.getFontMetrics();
+        int textWidth = metrics.stringWidth(labelText);
+        int textHeight = metrics.getAscent();
+        int rectW = Math.max(minBarWidth + (paddingX * 2), textWidth + (paddingX * 2));
+        int rectH = textHeight + metrics.getDescent() + (paddingY * 2);
+        int rectX = leftX;
+        int rectY = baselineY - textHeight - paddingY;
+        int barWidth = rectW - (paddingX * 2);
+        int barX = rectX + paddingX;
+        int barY = rectY + rectH + 8;
+
+        Composite oldComposite = g2d.getComposite();
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        g2d.setColor(new Color(62, 124, 220, 140));
+        g2d.fillRect(rectX, rectY, rectW, rectH);
+        g2d.setColor(selected ? new Color(120, 200, 255, 200) : new Color(92, 162, 240, 160));
+        if (rectW > 4 && rectH > 4) {
+            g2d.fillRect(rectX + 2, rectY + 2, rectW - 4, rectH - 4);
+        }
+
+        int textX = rectX + paddingX;
         if (selected) {
-            drawGlowingCenteredString(g2d, "> CRT BRIGHTNESS <", centerX, baselineY, YELLOW, GLOW_CYAN);
+            drawGlowingString(g2d, labelText, textX, baselineY, YELLOW, GLOW_CYAN);
         } else {
             g2d.setColor(WHITE);
-            drawCenteredString(g2d, "CRT BRIGHTNESS", centerX, baselineY);
+            g2d.drawString(labelText, textX, baselineY);
         }
 
         g2d.setColor(new Color(12, 26, 48, 200));
@@ -879,12 +1065,149 @@ public class GamePanel extends JPanel implements ActionListener {
                 g2d.fillRect(x, barY + 2, segmentWidth, barHeight - 3);
             }
         }
+        g2d.setComposite(oldComposite);
+    }
+
+    private void drawSettingsVolume(
+            Graphics2D g2d,
+            int optionIndex,
+            String label,
+            int volumeIndex,
+            int leftX,
+            int baselineY,
+            float alpha
+    ) {
+        boolean selected = settingsSelectionIndex == optionIndex;
+        int minBarWidth = 300;
+        int barHeight = 10;
+        int paddingX = 16;
+        int paddingY = 8;
+        String labelText = label + ": " + getVolumePercentLabel(volumeIndex);
+
+        g2d.setFont(BODY_FONT);
+        FontMetrics metrics = g2d.getFontMetrics();
+        int textWidth = metrics.stringWidth(labelText);
+        int textHeight = metrics.getAscent();
+        int rectW = Math.max(minBarWidth + (paddingX * 2), textWidth + (paddingX * 2));
+        int rectH = textHeight + metrics.getDescent() + (paddingY * 2);
+        int rectX = leftX;
+        int rectY = baselineY - textHeight - paddingY;
+        int barWidth = rectW - (paddingX * 2);
+        int barX = rectX + paddingX;
+        int barY = rectY + rectH + 8;
+
+        Composite oldComposite = g2d.getComposite();
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        g2d.setColor(new Color(62, 124, 220, 140));
+        g2d.fillRect(rectX, rectY, rectW, rectH);
+        g2d.setColor(selected ? new Color(120, 200, 255, 200) : new Color(92, 162, 240, 160));
+        if (rectW > 4 && rectH > 4) {
+            g2d.fillRect(rectX + 2, rectY + 2, rectW - 4, rectH - 4);
+        }
+
+        int textX = rectX + paddingX;
+        if (selected) {
+            drawGlowingString(g2d, labelText, textX, baselineY, YELLOW, GLOW_CYAN);
+        } else {
+            g2d.setColor(WHITE);
+            g2d.drawString(labelText, textX, baselineY);
+        }
+
+        g2d.setColor(new Color(12, 26, 48, 200));
+        g2d.fillRect(barX, barY, barWidth, barHeight);
+        g2d.setColor(new Color(160, 220, 255, 120));
+        g2d.drawRect(barX, barY, barWidth, barHeight);
+
+        int segments = VOLUME_LEVELS.length;
+        int gap = 4;
+        int segmentWidth = (barWidth - (gap * (segments - 1))) / segments;
+        for (int i = 0; i < segments; i++) {
+            int x = barX + (i * (segmentWidth + gap));
+            if (i <= volumeIndex) {
+                g2d.setColor(new Color(110, 240, 255, 200));
+                g2d.fillRect(x, barY + 2, segmentWidth, barHeight - 3);
+            } else {
+                g2d.setColor(new Color(70, 120, 170, 120));
+                g2d.fillRect(x, barY + 2, segmentWidth, barHeight - 3);
+            }
+        }
+        g2d.setComposite(oldComposite);
     }
 
     private void applyRenderQuality() {
         sceneBufferWidth = RENDER_QUALITY_WIDTHS[renderQualityIndex];
         sceneBufferHeight = RENDER_QUALITY_HEIGHTS[renderQualityIndex];
         sceneBuffer = null;
+    }
+
+    private void applyAudioVolumes() {
+        AudioManager.setMasterVolume(getVolumeLevel(masterVolumeIndex));
+        AudioManager.setMusicVolume(getVolumeLevel(musicVolumeIndex));
+        AudioManager.setSfxVolume(getVolumeLevel(sfxVolumeIndex));
+    }
+
+    private void handleVideoSettingsDelta(int delta) {
+        if (settingsSelectionIndex == SETTINGS_VIDEO_RENDER_QUALITY) {
+            renderQualityIndex = wrapIndex(renderQualityIndex + delta, RENDER_QUALITY_LABELS.length);
+            applyRenderQuality();
+            AudioManager.playSfx("toggle_tab.wav");
+        } else if (settingsSelectionIndex == SETTINGS_VIDEO_CRT_BRIGHTNESS) {
+            crtBrightnessIndex = wrapIndex(crtBrightnessIndex + delta, CRT_BRIGHTNESS_LEVELS.length);
+            crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[crtBrightnessIndex];
+        } else if (settingsSelectionIndex == SETTINGS_VIDEO_ASPECT) {
+            aspectModeIndex = wrapIndex(aspectModeIndex + delta, ASPECT_MODE_LABELS.length);
+            AudioManager.playSfx("toggle_tab.wav");
+        }
+    }
+
+    private void handleAudioSettingsDelta(int delta) {
+        if (settingsSelectionIndex == SETTINGS_AUDIO_MASTER) {
+            masterVolumeIndex = wrapIndex(masterVolumeIndex + delta, VOLUME_LEVELS.length);
+            applyAudioVolumes();
+        } else if (settingsSelectionIndex == SETTINGS_AUDIO_MUSIC) {
+            musicVolumeIndex = wrapIndex(musicVolumeIndex + delta, VOLUME_LEVELS.length);
+            applyAudioVolumes();
+        } else if (settingsSelectionIndex == SETTINGS_AUDIO_SFX) {
+            sfxVolumeIndex = wrapIndex(sfxVolumeIndex + delta, VOLUME_LEVELS.length);
+            applyAudioVolumes();
+        }
+    }
+
+    private void switchSettingsTab(int delta) {
+        settingsTabIndex = wrapIndex(settingsTabIndex + delta, 2);
+        int maxIndex = getSettingsItemCount() - 1;
+        if (settingsSelectionIndex > maxIndex) {
+            settingsSelectionIndex = maxIndex;
+        }
+        AudioManager.playSfx("toggle_tab.wav");
+    }
+
+    private int getSettingsItemCount() {
+        return settingsTabIndex == SETTINGS_TAB_VIDEO ? SETTINGS_VIDEO_ITEM_COUNT : SETTINGS_AUDIO_ITEM_COUNT;
+    }
+
+    private boolean isSettingsBackSelected() {
+        if (settingsTabIndex == SETTINGS_TAB_VIDEO) {
+            return settingsSelectionIndex == SETTINGS_VIDEO_BACK;
+        }
+        return settingsSelectionIndex == SETTINGS_AUDIO_BACK;
+    }
+
+    private float getVolumeLevel(int volumeIndex) {
+        int idx = Math.max(0, Math.min(VOLUME_LEVELS.length - 1, volumeIndex));
+        return VOLUME_LEVELS[idx];
+    }
+
+    private String getVolumePercentLabel(int volumeIndex) {
+        int percent = Math.round(getVolumeLevel(volumeIndex) * 100.0f);
+        return percent + "%";
+    }
+
+    private String getSettingsTabLabel() {
+        if (settingsTabIndex == SETTINGS_TAB_VIDEO) {
+            return "[VIDEO] | AUDIO";
+        }
+        return "VIDEO | [AUDIO]";
     }
 
     private int wrapIndex(int value, int size) {
@@ -1121,74 +1444,6 @@ public class GamePanel extends JPanel implements ActionListener {
         drawCenteredString(g2d, "ENTER BUY  |  ESC LEAVE", GameConfig.WIDTH / 2, y + h - 26);
     }
 
-    private void drawShopDialogueOverlayPostCrt(Graphics2D g2d, int panelWidth, int panelHeight) {
-        if (!isShopDialogueActive()) {
-            return;
-        }
-        BufferedImage dialogueSprite = getShopDialoguePage(shopDialoguePageIndex);
-        if (dialogueSprite == null || shopDialogueAlpha <= 0f) {
-            return;
-        }
-        Graphics2D overlayG = (Graphics2D) g2d.create(0, 0, panelWidth, panelHeight);
-        Composite oldComposite = g2d.getComposite();
-
-        double eased = easeInOut(shopDialogueAlpha);
-        int maxBarHeight = Math.max(24, (int) Math.round(panelHeight * 0.08));
-        int barHeight = (int) Math.round(maxBarHeight * eased);
-        int innerY = maxBarHeight;
-        int innerH = Math.max(1, panelHeight - (maxBarHeight * 2));
-
-        overlayG.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, shopDialogueAlpha * 0.35f));
-        overlayG.setColor(new Color(0, 0, 0, 255));
-        overlayG.fillRect(0, 0, panelWidth, panelHeight);
-
-        overlayG.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, shopDialogueAlpha));
-        overlayG.drawImage(dialogueSprite, 0, innerY, panelWidth, innerH, null);
-        drawDialogueCrtAccent(overlayG, panelWidth, innerY, innerH, shopDialogueAlpha);
-        drawDialogueAdvanceHint(overlayG, panelWidth, innerY, innerH, shopDialogueAlpha);
-
-        overlayG.setComposite(AlphaComposite.SrcOver);
-        overlayG.setColor(Color.BLACK);
-        if (barHeight > 0) {
-            overlayG.fillRect(0, 0, panelWidth, barHeight);
-            overlayG.fillRect(0, panelHeight - barHeight, panelWidth, barHeight);
-        }
-
-        overlayG.setComposite(oldComposite);
-        overlayG.dispose();
-    }
-
-    private void drawDialogueCrtAccent(Graphics2D g2d, int width, int innerY, int innerH, float alpha) {
-        float lineAlpha = Math.min(0.22f, alpha * 0.22f);
-        if (lineAlpha > 0f) {
-            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, lineAlpha));
-            for (int y = innerY; y < innerY + innerH; y += 4) {
-                g2d.setColor(new Color(0, 0, 0, 255));
-                g2d.drawLine(0, y, width, y);
-            }
-        }
-
-        float highlightAlpha = Math.min(0.12f, alpha * 0.12f);
-        if (highlightAlpha > 0f) {
-            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, highlightAlpha));
-            g2d.setColor(new Color(140, 220, 255, 255));
-            for (int y = innerY + 1; y < innerY + innerH; y += 8) {
-                g2d.drawLine(0, y, width, y);
-            }
-        }
-
-        float glowAlpha = Math.min(0.35f, alpha * 0.35f);
-        if (glowAlpha > 0f) {
-            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, glowAlpha));
-            Stroke oldStroke = g2d.getStroke();
-            g2d.setStroke(new BasicStroke(2f));
-            g2d.setColor(new Color(94, 245, 255, 160));
-            g2d.drawRect(6, innerY + 6, width - 12, innerH - 12);
-            g2d.setStroke(oldStroke);
-        }
-
-        g2d.setComposite(AlphaComposite.SrcOver);
-    }
 
     private double easeInOut(double value) {
         double clamped = Math.max(0.0, Math.min(1.0, value));
@@ -1216,9 +1471,7 @@ public class GamePanel extends JPanel implements ActionListener {
                 } else if (screen == ScreenState.SETTINGS) {
                     activateSelectedSettingsItem();
                 } else if (screen == ScreenState.SHOP) {
-                    if (!isShopDialogueActive()) {
-                        purchaseSelectedShopItem();
-                    }
+                    purchaseSelectedShopItem();
                 } else if (screen == ScreenState.LOST) {
                     startRun();
                 }
@@ -1230,10 +1483,9 @@ public class GamePanel extends JPanel implements ActionListener {
             @Override
             public void actionPerformed(ActionEvent e) {
                 if (screen == ScreenState.SHOP) {
-                    if (!isShopDialogueActive()) {
-                        closeShop();
-                    }
+                    closeShop();
                 } else if (screen == ScreenState.SETTINGS) {
+                    AudioManager.playSfx("back_toggle.wav");
                     screen = ScreenState.MENU;
                 } else if (screen != ScreenState.MENU && !menuTransitionActive) {
                     startMenuTransition();
@@ -1260,13 +1512,7 @@ public class GamePanel extends JPanel implements ActionListener {
                     return;
                 }
                 if (screen == ScreenState.SHOP && !menuTransitionActive) {
-                    if (isShopDialogueActive()) {
-                        if (direction == Direction.RIGHT) {
-                            requestShopDialogueAdvance();
-                        }
-                    } else {
-                        handleShopDirection(direction);
-                    }
+                    handleShopDirection(direction);
                     return;
                 }
                 if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive) {
@@ -1327,6 +1573,7 @@ public class GamePanel extends JPanel implements ActionListener {
         roomTransitionActive = false;
         roomIntroActive = false;
         pendingRoomEntryDirection = null;
+        roomIntroDirection = null;
         runStartFadeInActive = true;
         runStartFadeInStartMs = System.currentTimeMillis();
         enemyKillEffects.clear();
@@ -1348,6 +1595,7 @@ public class GamePanel extends JPanel implements ActionListener {
         roomTransitionActive = false;
         roomIntroActive = false;
         pendingRoomEntryDirection = null;
+        roomIntroDirection = null;
         lastHitDamage = 0;
         lastHitUntilMs = 0;
         enemyKillEffects.clear();
@@ -1504,6 +1752,7 @@ public class GamePanel extends JPanel implements ActionListener {
         lastHitUntilMs = 0;
         backdropEffects.clearHueSweeps();
         EncounterEnemy enemy = roomEncounters.get(encounterIndex).getEnemy();
+        encounterMusicFile = getEncounterMusicFile(enemy.getArchetype());
         roundManager.configureEncounter(enemy.getArchetype());
         AudioManager.playSfx("encounter_start.wav");
         pendingEncounterIndex = encounterIndex;
@@ -1515,14 +1764,13 @@ public class GamePanel extends JPanel implements ActionListener {
         clearMovementInput();
         screen = ScreenState.SHOP;
         shopSelectionIndex = 0;
-        startShopDialogue();
+        shopMusicFade = 0.0;
     }
 
     private void closeShop() {
         if (screen == ScreenState.SHOP) {
             screen = ScreenState.DUNGEON;
             clearMovementInput();
-            resetShopDialogue();
         }
     }
 
@@ -1533,6 +1781,7 @@ public class GamePanel extends JPanel implements ActionListener {
         roomTransitionStartMs = System.currentTimeMillis();
         roomIntroActive = false;
         pendingRoomEntryDirection = exitedDir;
+        roomIntroDirection = exitedDir;
         AudioManager.playSfx("next_room.wav");
     }
 
@@ -1618,6 +1867,8 @@ public class GamePanel extends JPanel implements ActionListener {
             clearMovementInput();
             clearTimerBarAnimation();
             screen = ScreenState.DUNGEON;
+            encounterBestedTransitionActive = true;
+            encounterBestedTransitionStartMs = System.currentTimeMillis();
         }
     }
 
@@ -2026,144 +2277,10 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void loadTransitionSprites() {
         megamanTransitionSprite = loadImage("megaman.png");
-        shopDialogueSprite = loadImage("dialogue.png");
-        shopDialogueSprite2 = loadImage("dialogue2.png");
-        refreshShopDialoguePageCount();
     }
 
-    private void startShopDialogue() {
-        refreshShopDialoguePageCount();
-        if (shopDialoguePageCount <= 0) {
-            resetShopDialogue();
-            return;
-        }
-        shopDialoguePageIndex = 0;
-        shopDialoguePendingIndex = -1;
-        shopDialogueAdvanceStartMs = System.currentTimeMillis();
-        shopDialogueState = ShopDialogueState.FADING_IN;
-        shopDialogueFadeStartMs = System.currentTimeMillis();
-        shopDialogueAlpha = 0f;
-        shopDialogueAdvanceQueued = false;
-    }
-
-    private void requestShopDialogueAdvance() {
-        if (shopDialogueState == ShopDialogueState.NONE) {
-            return;
-        }
-        if (!isShopDialogueAdvanceReady()) {
-            return;
-        }
-        if (shopDialoguePageCount <= 0) {
-            resetShopDialogue();
-            return;
-        }
-        int nextIndex = shopDialoguePageIndex + 1;
-        int pendingIndex = nextIndex >= shopDialoguePageCount ? -1 : nextIndex;
-        if (shopDialogueState == ShopDialogueState.FADING_IN) {
-            shopDialogueAdvanceQueued = true;
-            shopDialoguePendingIndex = pendingIndex;
-            return;
-        }
-        if (shopDialogueState == ShopDialogueState.VISIBLE) {
-            shopDialoguePendingIndex = pendingIndex;
-            shopDialogueState = ShopDialogueState.FADING_OUT;
-            shopDialogueFadeStartMs = System.currentTimeMillis();
-            return;
-        }
-    }
-
-    private void resetShopDialogue() {
-        shopDialogueState = ShopDialogueState.NONE;
-        shopDialogueAlpha = 0f;
-        shopDialogueAdvanceQueued = false;
-        shopDialoguePageIndex = 0;
-        shopDialoguePageCount = 0;
-        shopDialoguePendingIndex = -1;
-        shopDialogueAdvanceStartMs = 0L;
-    }
-
-    private boolean isShopDialogueActive() {
-        return shopDialogueState != ShopDialogueState.NONE;
-    }
-
-    private void updateShopDialogue() {
-        if (screen != ScreenState.SHOP) {
-            if (shopDialogueState != ShopDialogueState.NONE) {
-                resetShopDialogue();
-            }
-            return;
-        }
-        if (shopDialogueState == ShopDialogueState.NONE) {
-            return;
-        }
-
-        long elapsedMs = System.currentTimeMillis() - shopDialogueFadeStartMs;
-        if (shopDialogueState == ShopDialogueState.FADING_IN) {
-            double progress = elapsedMs / (double) SHOP_DIALOGUE_FADE_IN_MS;
-            if (progress >= 1.0) {
-                shopDialogueAlpha = 1f;
-                shopDialogueState = ShopDialogueState.VISIBLE;
-                if (shopDialogueAdvanceQueued) {
-                    shopDialogueAdvanceQueued = false;
-                    shopDialogueState = ShopDialogueState.FADING_OUT;
-                    shopDialogueFadeStartMs = System.currentTimeMillis();
-                }
-            } else {
-                shopDialogueAlpha = (float) Math.max(0.0, Math.min(1.0, progress));
-            }
-            return;
-        }
-
-        if (shopDialogueState == ShopDialogueState.VISIBLE) {
-            shopDialogueAlpha = 1f;
-            return;
-        }
-
-        if (shopDialogueState == ShopDialogueState.FADING_OUT) {
-            double progress = elapsedMs / (double) SHOP_DIALOGUE_FADE_OUT_MS;
-            if (progress >= 1.0) {
-                if (shopDialoguePendingIndex >= 0) {
-                    shopDialoguePageIndex = shopDialoguePendingIndex;
-                    shopDialoguePendingIndex = -1;
-                    shopDialogueAdvanceStartMs = System.currentTimeMillis();
-                    shopDialogueState = ShopDialogueState.FADING_IN;
-                    shopDialogueFadeStartMs = System.currentTimeMillis();
-                    shopDialogueAlpha = 0f;
-                    shopDialogueAdvanceQueued = false;
-                } else {
-                    resetShopDialogue();
-                }
-            } else {
-                shopDialogueAlpha = (float) Math.max(0.0, Math.min(1.0, 1.0 - progress));
-            }
-        }
-    }
-
-    private void refreshShopDialoguePageCount() {
-        int count = 0;
-        if (shopDialogueSprite != null) {
-            count++;
-        }
-        if (shopDialogueSprite2 != null) {
-            count++;
-        }
-        shopDialoguePageCount = count;
-    }
-
-    private BufferedImage getShopDialoguePage(int index) {
-        int i = 0;
-        if (shopDialogueSprite != null) {
-            if (i == index) {
-                return shopDialogueSprite;
-            }
-            i++;
-        }
-        if (shopDialogueSprite2 != null) {
-            if (i == index) {
-                return shopDialogueSprite2;
-            }
-        }
-        return null;
+    private void loadMenuSprites() {
+        startMenuSprite = loadImage("START.png");
     }
 
     private void drawHeartHud(Graphics2D g2d) {
@@ -2285,14 +2402,121 @@ public class GamePanel extends JPanel implements ActionListener {
         drawEncounterEnemySlide(g2d, encounterTransitionStartMs, ENCOUNTER_TRANSITION_MS, ENCOUNTER_TRANSITION_HOLD_MS, getPendingEncounterEnemy());
     }
 
+    private void drawEncounterBestedTransition(Graphics2D g2d) {
+        long elapsedMs = System.currentTimeMillis() - encounterBestedTransitionStartMs;
+        long statusDurationMs = ENCOUNTER_TRANSITION_MS + ENCOUNTER_TRANSITION_HOLD_MS;
+        if (elapsedMs <= statusDurationMs) {
+            drawEncounterStatusSlide(
+                    g2d,
+                    encounterBestedTransitionStartMs,
+                    ENCOUNTER_TRANSITION_MS,
+                    ENCOUNTER_TRANSITION_HOLD_MS,
+                    "ENEMY BESTED",
+                    GREEN
+            );
+            return;
+        }
+
+        double outroProgress = (elapsedMs - statusDurationMs) / (double) ENCOUNTER_INTRO_MS;
+        outroProgress = Math.max(0.0, Math.min(1.0, outroProgress));
+        int alpha = clampInt((int) Math.round(255 * (1.0 - outroProgress)), 0, 255);
+        if (alpha <= 0) {
+            return;
+        }
+        g2d.setColor(new Color(0, 0, 0, alpha));
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+    }
+
     private void drawRoomTransition(Graphics2D g2d) {
-        drawHorizontalShutterTransition(
+        drawDirectionalRoomTransition(
                 g2d,
                 roomTransitionStartMs,
                 ROOM_TRANSITION_MS,
                 ROOM_TRANSITION_HOLD_MS,
                 "NEXT ROOM",
-                null
+                pendingRoomEntryDirection
+        );
+    }
+
+    private void drawDirectionalRoomTransition(
+            Graphics2D g2d,
+            long startMs,
+            long transitionMs,
+            long holdMs,
+            String text,
+            Direction direction
+    ) {
+        long elapsedMs = System.currentTimeMillis() - startMs;
+        double totalProgress = elapsedMs / (double) (transitionMs + holdMs);
+        totalProgress = Math.max(0.0, Math.min(1.0, totalProgress));
+
+        g2d.setColor(Color.BLACK);
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+
+        g2d.setFont(HUD_FONT);
+        FontMetrics metrics = g2d.getFontMetrics();
+        int centerX = GameConfig.WIDTH / 2;
+        int centerY = GameConfig.HEIGHT / 2;
+        int textTopY = centerY - (metrics.getHeight() / 2);
+        int textBaselineY = textTopY + metrics.getAscent();
+
+        if (direction == null) {
+            direction = Direction.RIGHT;
+        }
+
+        boolean horizontal = direction == Direction.LEFT || direction == Direction.RIGHT;
+        int startPos;
+        int centerPos;
+        int exitPos;
+        if (horizontal) {
+            int textWidth = metrics.stringWidth(text);
+            int offscreen = (textWidth / 2) + 40;
+            centerPos = centerX;
+            if (direction == Direction.RIGHT) {
+                startPos = -offscreen;
+                exitPos = GameConfig.WIDTH + offscreen;
+            } else {
+                startPos = GameConfig.WIDTH + offscreen;
+                exitPos = -offscreen;
+            }
+        } else {
+            int textHeight = metrics.getHeight();
+            int offscreen = textHeight + 40;
+            centerPos = textBaselineY;
+            if (direction == Direction.DOWN) {
+                startPos = -offscreen;
+                exitPos = GameConfig.HEIGHT + offscreen;
+            } else {
+                startPos = GameConfig.HEIGHT + offscreen;
+                exitPos = -offscreen;
+            }
+        }
+
+        int textPos;
+        int textAlpha;
+        if (totalProgress < 0.78) {
+            double enterProgress = Math.max(0.0, Math.min(1.0, (totalProgress - 0.12) / 0.66));
+            double easeOut = 1.0 - Math.pow(1.0 - enterProgress, 3.0);
+            double textEased = (0.68 * easeOut) + (0.32 * enterProgress);
+            textPos = (int) Math.round(startPos + ((centerPos - startPos) * textEased));
+            textAlpha = (int) Math.round(255 * enterProgress);
+        } else {
+            double exitProgress = Math.max(0.0, Math.min(1.0, (totalProgress - 0.78) / 0.22));
+            double exitEased = (0.34 * exitProgress) + (0.66 * Math.pow(exitProgress, 1.9));
+            textPos = (int) Math.round(centerPos + ((exitPos - centerPos) * exitEased));
+            textAlpha = 255;
+        }
+        textAlpha = Math.max(0, Math.min(255, textAlpha));
+
+        int textCenterX = horizontal ? textPos : centerX;
+        int textBaseline = horizontal ? textBaselineY : textPos;
+        drawGlowingCenteredString(
+                g2d,
+                text,
+                textCenterX,
+                textBaseline,
+                new Color(WHITE.getRed(), WHITE.getGreen(), WHITE.getBlue(), textAlpha),
+                new Color(GLOW_CYAN.getRed(), GLOW_CYAN.getGreen(), GLOW_CYAN.getBlue(), Math.max(20, textAlpha / 2))
         );
     }
 
@@ -2372,7 +2596,7 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void drawRoomIntro(Graphics2D g2d) {
-        drawTransitionIntro(g2d, roomIntroStartMs, ROOM_INTRO_MS, "NEXT ROOM", null);
+        drawTransitionIntro(g2d, roomIntroStartMs, ROOM_INTRO_MS, "", null);
     }
 
     private void drawTransitionIntro(Graphics2D g2d, long startMs, long introMs, String text, EncounterEnemy encounterEnemy) {
@@ -2407,6 +2631,73 @@ public class GamePanel extends JPanel implements ActionListener {
         );
     }
 
+    private void drawDirectionalRoomIntro(
+            Graphics2D g2d,
+            long startMs,
+            long introMs,
+            String text,
+            Direction direction
+    ) {
+        double progress = (System.currentTimeMillis() - startMs) / (double) introMs;
+        progress = Math.max(0.0, Math.min(1.0, progress));
+
+        int overlayAlpha = (int) Math.round(255 * (1.0 - progress));
+        g2d.setColor(new Color(0, 0, 0, overlayAlpha));
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+
+        g2d.setFont(HUD_FONT);
+        FontMetrics metrics = g2d.getFontMetrics();
+        int textWidth = metrics.stringWidth(text);
+        int centerX = GameConfig.WIDTH / 2;
+        int centerY = GameConfig.HEIGHT / 2;
+        int textTopY = centerY - (metrics.getHeight() / 2);
+        int textBaselineY = textTopY + metrics.getAscent();
+
+        if (direction == null) {
+            direction = Direction.RIGHT;
+        }
+
+        boolean horizontal = direction == Direction.LEFT || direction == Direction.RIGHT;
+        int startPos;
+        int endPos;
+        if (horizontal) {
+            int offscreen = (textWidth / 2) + 40;
+            if (direction == Direction.RIGHT) {
+                startPos = centerX + ENCOUNTER_TEXT_HANDOFF_OFFSET;
+                endPos = GameConfig.WIDTH + offscreen;
+            } else {
+                startPos = centerX - ENCOUNTER_TEXT_HANDOFF_OFFSET;
+                endPos = -offscreen;
+            }
+        } else {
+            int textHeight = metrics.getHeight();
+            int offscreen = textHeight + 40;
+            if (direction == Direction.DOWN) {
+                startPos = textBaselineY + ENCOUNTER_TEXT_HANDOFF_OFFSET;
+                endPos = GameConfig.HEIGHT + offscreen;
+            } else {
+                startPos = textBaselineY - ENCOUNTER_TEXT_HANDOFF_OFFSET;
+                endPos = -offscreen;
+            }
+        }
+
+        double exitEased = (0.42 * progress) + (0.58 * Math.pow(progress, 1.9));
+        int textPos = (int) Math.round(startPos + ((endPos - startPos) * exitEased));
+
+        int textAlpha = (int) Math.round(255 * (1.0 - (progress * 0.35)));
+        textAlpha = Math.max(0, Math.min(255, textAlpha));
+        int textCenterX = horizontal ? textPos : centerX;
+        int textBaseline = horizontal ? textBaselineY : textPos;
+        drawGlowingCenteredString(
+                g2d,
+                text,
+                textCenterX,
+                textBaseline,
+                new Color(WHITE.getRed(), WHITE.getGreen(), WHITE.getBlue(), textAlpha),
+                new Color(GLOW_CYAN.getRed(), GLOW_CYAN.getGreen(), GLOW_CYAN.getBlue(), Math.max(20, textAlpha / 2))
+        );
+    }
+
     private void drawEncounterEnemySlide(
             Graphics2D g2d,
             long startMs,
@@ -2417,7 +2708,19 @@ public class GamePanel extends JPanel implements ActionListener {
         if (encounterEnemy == null) {
             return;
         }
+        Color accent = getEnemyAccentColor(encounterEnemy);
+        String label = encounterEnemy.getArchetype().getLabel();
+        drawEncounterStatusSlide(g2d, startMs, transitionMs, holdMs, label, accent);
+    }
 
+    private void drawEncounterStatusSlide(
+            Graphics2D g2d,
+            long startMs,
+            long transitionMs,
+            long holdMs,
+            String label,
+            Color accent
+    ) {
         long totalDurationMs = Math.max(1L, transitionMs + holdMs);
         double progress = (System.currentTimeMillis() - startMs) / (double) totalDurationMs;
         progress = Math.max(0.0, Math.min(1.0, progress));
@@ -2425,8 +2728,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setColor(Color.BLACK);
         g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
 
-        Color accent = getEnemyAccentColor(encounterEnemy);
-        String label = encounterEnemy.getArchetype().getLabel();
         g2d.setFont(TRANSITION_ENEMY_FONT);
         FontMetrics metrics = g2d.getFontMetrics();
         int textWidth = metrics.stringWidth(label);
@@ -2564,14 +2865,27 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void updateBackgroundMusic() {
-        String targetFile = (screen == ScreenState.MENU || screen == ScreenState.SETTINGS)
-                ? MENU_MUSIC_FILE
-                : GAMEPLAY_MUSIC_FILE;
-        if (targetFile.equals(activeMusicFile)) {
+        boolean inMenu = screen == ScreenState.MENU || screen == ScreenState.SETTINGS;
+        if (inMenu) {
+            if (!MENU_MUSIC_FILE.equals(activeMusicFile)) {
+                AudioManager.ensureBackgroundLoop(MENU_MUSIC_FILE);
+                activeMusicFile = MENU_MUSIC_FILE;
+            }
+            AudioManager.setBackgroundFade(1.0f);
+            AudioManager.stopLayeredLoops();
             return;
         }
-        AudioManager.ensureBackgroundLoop(targetFile);
-        activeMusicFile = targetFile;
+
+        if (activeMusicFile != null) {
+            AudioManager.stopBackgroundLoop();
+            activeMusicFile = null;
+        }
+
+        AudioManager.ensureLayeredLoops(DUNGEON_MUSIC_FILE, encounterMusicFile, SHOP_MUSIC_FILE);
+        double shopMix = easeInOut(shopMusicFade);
+        double encounterMix = easeInOut(encounterMusicMix) * (1.0 - shopMix);
+        double baseMix = Math.max(0.0, 1.0 - shopMix - encounterMix);
+        AudioManager.setLayeredMix((float) baseMix, (float) encounterMix, (float) shopMix);
     }
 
     private void drawCenteredString(Graphics2D g2d, String text, int centerX, int baselineY) {
@@ -2613,63 +2927,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.drawImage(crtOverlayBuffer, 0, 0, null);
     }
 
-    private void drawDialogueAdvanceHint(Graphics2D g2d, int width, int innerY, int innerH, float alpha) {
-        if (shopDialogueState == ShopDialogueState.NONE) {
-            return;
-        }
-        int barWidth = 240;
-        int barHeight = 8;
-        int barX = (width - barWidth) / 2;
-        int barY = innerY + innerH - 28;
-        float hintAlpha = Math.min(0.9f, alpha);
-
-        double progress = getShopDialogueAdvanceProgress();
-        if (progress < 1.0) {
-            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, hintAlpha * 0.65f));
-            g2d.setColor(new Color(255, 255, 255, 70));
-            g2d.fillRect(barX, barY, barWidth, barHeight);
-            g2d.setColor(new Color(255, 255, 255, 200));
-            g2d.fillRect(barX, barY, (int) Math.round(barWidth * progress), barHeight);
-            g2d.setComposite(AlphaComposite.SrcOver);
-            return;
-        }
-
-        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, hintAlpha));
-        g2d.setFont(SMALL_FONT);
-        g2d.setColor(WHITE);
-        String left = "PRESS";
-        String right = "TO ADVANCE";
-        FontMetrics metrics = g2d.getFontMetrics();
-        int iconSize = 18;
-        int gap = 8;
-        int totalWidth = metrics.stringWidth(left) + gap + iconSize + gap + metrics.stringWidth(right);
-        int textX = (width - totalWidth) / 2;
-        int baselineY = innerY + innerH - 18;
-
-        g2d.drawString(left, textX, baselineY);
-        int iconX = textX + metrics.stringWidth(left) + gap;
-        int iconY = baselineY - iconSize + 2;
-        BufferedImage arrow = arrowSprites.get(Direction.RIGHT);
-        if (arrow != null) {
-            g2d.drawImage(arrow, iconX, iconY, iconSize, iconSize, null);
-        } else {
-            drawArrow(g2d, Direction.RIGHT, iconX, iconY, iconSize, WHITE);
-        }
-        g2d.drawString(right, iconX + iconSize + gap, baselineY);
-        g2d.setComposite(AlphaComposite.SrcOver);
-    }
-
-    private double getShopDialogueAdvanceProgress() {
-        if (shopDialogueAdvanceStartMs <= 0L) {
-            return 1.0;
-        }
-        long elapsed = System.currentTimeMillis() - shopDialogueAdvanceStartMs;
-        return Math.max(0.0, Math.min(1.0, elapsed / (double) SHOP_DIALOGUE_ADVANCE_DELAY_MS));
-    }
-
-    private boolean isShopDialogueAdvanceReady() {
-        return getShopDialogueAdvanceProgress() >= 1.0;
-    }
 
     private void drawCrtGlow(Graphics2D g2d, int width, int height) {
         Composite oldComposite = g2d.getComposite();

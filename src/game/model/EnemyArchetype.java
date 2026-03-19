@@ -2,7 +2,7 @@ package game.model;
 
 public enum EnemyArchetype {
     NORMAL("DRONE", "STANDARD PATTERN", 1.00, 4, 8, 1.00, false, -1L, true, 99, false),
-    BERSERKER("BERSERKER", "NO REFILL", 2.15, 5, 8, 1.18, false, -1L, false, 99, false),
+    BERSERKER("BERSERKER", "NO REFILL", 3.00, 5, 8, 1.18, false, -1L, false, 99, false),
     ECHO("ECHO", "MEMORY FIGHT", 1.00, 4, 5, 2.15, false, 900L, true, 99, false),
     REVERSE("REVEAL", "UNFOLD THE CHAIN", 1.25, 4, 7, 1.85, false, -1L, true, 2, true);
 
