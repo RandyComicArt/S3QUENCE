@@ -1,13 +1,16 @@
 package game.visual;
 
+import game.audio.AudioManager;
 import game.config.GameConfig;
 import game.logic.RoundCompletion;
 import game.model.ScreenState;
 import game.model.TimerStyle;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
+import java.awt.Stroke;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -15,13 +18,20 @@ import java.util.Random;
 public class BackdropEffects {
     private static final Color BG_DEEP = new Color(0, 2, 10);
     private static final Color BG_MID = new Color(5, 18, 48);
+    private static final Color WAVEFORM_COLOR = new Color(120, 230, 255);
     private static final int BACKDROP_GRID_SPACING = 52;
     private static final int RIPPLE_MAX_COUNT = 16;
     private static final int HUE_SWEEP_MAX_COUNT = 8;
+    private static final int WAVEFORM_STEP = 6;
+    private static final double WAVEFORM_BASE_Y_RATIO = 0.56;
+    private static final double WAVEFORM_ENERGY_SMOOTH = 0.12;
+    private static final int WAVEFORM_TRAIL_COUNT = 3;
+    private static final double WAVEFORM_TRAIL_SPACING = 10.0;
 
     private final Random random = new Random();
     private final List<BackgroundRipple> backgroundRipples = new ArrayList<>();
     private final List<HueSweepRipple> hueSweepRipples = new ArrayList<>();
+    private double waveformEnergy;
 
     private static class BackgroundRipple {
         int x;
@@ -53,6 +63,7 @@ public class BackdropEffects {
 
         long nowMs = System.currentTimeMillis();
         double t = nowMs / 1000.0;
+        drawAudioWaveform(g2d, t);
         drawFlowField(g2d, t);
         drawWarpedGrid(g2d, nowMs);
         if (screen == ScreenState.ENCOUNTER && timerStyle == TimerStyle.BACKDROP_HUE) {
@@ -182,6 +193,93 @@ public class BackdropEffects {
                 previousX = x;
                 previousY = y;
             }
+        }
+    }
+
+    private void drawAudioWaveform(Graphics2D g2d, double t) {
+        double rawEnergy = AudioManager.getMusicEnergy();
+        double targetEnergy = Math.pow(clampDouble(rawEnergy, 0.0, 1.0), 0.7);
+        waveformEnergy += (targetEnergy - waveformEnergy) * WAVEFORM_ENERGY_SMOOTH;
+
+        double amplitude = 22.0 + (waveformEnergy * 120.0);
+        double lowFreq = 0.0029;
+        double midFreq = 0.0068;
+        double highFreq = 0.0125;
+        double phaseLow = t * 0.65;
+        double phaseMid = t * 1.05;
+        double phaseHigh = t * 1.55;
+        double breath = 0.75 + (0.25 * Math.sin(t * 0.28));
+        int baseY = (int) Math.round(GameConfig.HEIGHT * WAVEFORM_BASE_Y_RATIO);
+        int alpha = clampAlpha(32 + (int) Math.round(90 * waveformEnergy));
+
+        Color lineColor = new Color(WAVEFORM_COLOR.getRed(), WAVEFORM_COLOR.getGreen(), WAVEFORM_COLOR.getBlue(), alpha);
+        Stroke oldStroke = g2d.getStroke();
+
+        for (int pass = 0; pass < WAVEFORM_TRAIL_COUNT; pass++) {
+            double trailRatio = pass / (double) Math.max(1, WAVEFORM_TRAIL_COUNT - 1);
+            double trailOffset = (trailRatio - 0.5) * WAVEFORM_TRAIL_SPACING;
+            double trailEnergy = waveformEnergy * (1.0 - (trailRatio * 0.4));
+            int trailAlpha = clampAlpha(alpha - (int) Math.round(22 * trailRatio));
+
+            Color trailGlow = new Color(WAVEFORM_COLOR.getRed(), WAVEFORM_COLOR.getGreen(), WAVEFORM_COLOR.getBlue(), Math.max(0, trailAlpha - 20));
+            g2d.setStroke(new BasicStroke((float) (3.6 + (trailEnergy * 2.2)), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2d.setColor(trailGlow);
+            drawWaveformCurve(g2d, baseY + trailOffset, amplitude * (0.92 + (trailRatio * 0.1)), lowFreq, midFreq, highFreq,
+                    phaseLow + (trailRatio * 0.2), phaseMid - (trailRatio * 0.18), phaseHigh + (trailRatio * 0.12), breath);
+
+            g2d.setStroke(new BasicStroke((float) (1.9 + (trailEnergy * 1.0)), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2d.setColor(new Color(lineColor.getRed(), lineColor.getGreen(), lineColor.getBlue(), trailAlpha));
+            drawWaveformCurve(g2d, baseY + trailOffset, amplitude * (0.92 + (trailRatio * 0.1)), lowFreq, midFreq, highFreq,
+                    phaseLow + (trailRatio * 0.2), phaseMid - (trailRatio * 0.18), phaseHigh + (trailRatio * 0.12), breath);
+        }
+
+        g2d.setStroke(oldStroke);
+    }
+
+    private int clampAlpha(int alpha) {
+        return Math.max(0, Math.min(255, alpha));
+    }
+
+    private void drawWaveformCurve(
+            Graphics2D g2d,
+            double baseY,
+            double amplitude,
+            double lowFreq,
+            double midFreq,
+            double highFreq,
+            double phaseLow,
+            double phaseMid,
+            double phaseHigh,
+            double breath
+    ) {
+        int prevX = 0;
+        double prevXNorm = 0.0;
+        double prevLeftBias = Math.pow(1.0 - prevXNorm, 0.6);
+        double prevMidBias = 1.0 - Math.abs(prevXNorm - 0.55) * 1.6;
+        prevMidBias = Math.max(0.0, prevMidBias);
+        double low = Math.sin((prevX * lowFreq) + phaseLow);
+        double mid = Math.sin((prevX * midFreq) - phaseMid);
+        double high = Math.sin((prevX * highFreq) + phaseHigh);
+        double lowAmp = amplitude * (0.45 + (0.95 * prevLeftBias));
+        double midAmp = amplitude * (0.22 + (0.55 * prevMidBias));
+        double highAmp = amplitude * 0.10;
+        int prevY = (int) Math.round(baseY + ((low * lowAmp + mid * midAmp + high * highAmp) * breath));
+
+        for (int x = WAVEFORM_STEP; x <= GameConfig.WIDTH; x += WAVEFORM_STEP) {
+            double xNorm = x / (double) GameConfig.WIDTH;
+            double leftBias = Math.pow(1.0 - xNorm, 0.6);
+            double midBias = 1.0 - Math.abs(xNorm - 0.55) * 1.6;
+            midBias = Math.max(0.0, midBias);
+            low = Math.sin((x * lowFreq) + phaseLow);
+            mid = Math.sin((x * midFreq) - phaseMid);
+            high = Math.sin((x * highFreq) + phaseHigh);
+            lowAmp = amplitude * (0.45 + (0.95 * leftBias));
+            midAmp = amplitude * (0.22 + (0.55 * midBias));
+            highAmp = amplitude * 0.10;
+            int y = (int) Math.round(baseY + ((low * lowAmp + mid * midAmp + high * highAmp) * breath));
+            g2d.drawLine(prevX, prevY, x, y);
+            prevX = x;
+            prevY = y;
         }
     }
 

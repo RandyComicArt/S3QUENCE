@@ -11,6 +11,10 @@ import java.io.File;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class AudioManager {
@@ -28,6 +32,7 @@ public final class AudioManager {
     private static final float DEFAULT_MUSIC_GAIN_DB = -5.0f;
     private static final float DEFAULT_SFX_GAIN_DB = -3.0f;
     private static final float ENCOUNTER_LOOP3_GAIN_DB = 5.0f;
+    private static final int ENVELOPE_BIN_MS = 33;
     private static final float CLICK_GAIN_JITTER_DB = 2.0f;
     private static final double CLICK_RATE_JITTER = 0.055;
     private static final float CLICK_PAN_JITTER = 0.28f;
@@ -35,6 +40,17 @@ public final class AudioManager {
     private static float musicVolume = 1.0f;
     private static float sfxVolume = 1.0f;
     private static float backgroundFade = 1.0f;
+    private static final Map<String, Envelope> envelopeCache = new HashMap<>();
+
+    private static final class Envelope {
+        private final float[] bins;
+        private final int framesPerBin;
+
+        private Envelope(float[] bins, int framesPerBin) {
+            this.bins = bins;
+            this.framesPerBin = framesPerBin;
+        }
+    }
 
     private AudioManager() {
     }
@@ -324,6 +340,22 @@ public final class AudioManager {
         return sfxVolume;
     }
 
+    public static synchronized float getMusicEnergy() {
+        if (musicClip != null && musicClip.isOpen() && currentMusicFile != null) {
+            float energy = sampleEnvelope(currentMusicFile, musicClip);
+            return clampVolume(energy * backgroundFade);
+        }
+
+        if (layeredBaseClip != null && layeredBaseClip.isOpen()) {
+            float baseEnergy = sampleEnvelope(currentLayeredBaseFile, layeredBaseClip) * layeredBaseMix;
+            float layerEnergy = sampleEnvelope(currentLayeredLayerFile, layeredLayerClip) * layeredLayerMix;
+            float altEnergy = sampleEnvelope(currentLayeredAltFile, layeredAltClip) * layeredAltMix;
+            return clampVolume(baseEnergy + layerEnergy + altEnergy);
+        }
+
+        return 0.0f;
+    }
+
     private static void applyMusicGain() {
         if (musicClip == null || !musicClip.isOpen()) {
             applyLayeredMix();
@@ -354,6 +386,85 @@ public final class AudioManager {
 
     private static float clampVolume(float volume) {
         return Math.max(0.0f, Math.min(1.0f, volume));
+    }
+
+    private static float sampleEnvelope(String fileName, Clip clip) {
+        if (fileName == null || fileName.isBlank() || clip == null || !clip.isOpen()) {
+            return 0.0f;
+        }
+        Envelope envelope = getEnvelope(fileName);
+        if (envelope == null || envelope.bins.length == 0) {
+            return 0.0f;
+        }
+        long framePosition = clip.getFramePosition();
+        int index = (int) ((framePosition / envelope.framesPerBin) % envelope.bins.length);
+        if (index < 0) {
+            index += envelope.bins.length;
+        }
+        return envelope.bins[index];
+    }
+
+    private static Envelope getEnvelope(String fileName) {
+        Envelope cached = envelopeCache.get(fileName);
+        if (cached != null) {
+            return cached;
+        }
+
+        URL url = findAudioUrl(fileName);
+        if (url == null) {
+            return null;
+        }
+
+        List<Float> bins = new ArrayList<>();
+        int framesPerBin = 1;
+        try (AudioInputStream stream = openPlayableStream(url)) {
+            AudioFormat format = stream.getFormat();
+            int frameSize = format.getFrameSize();
+            if (frameSize <= 0) {
+                return null;
+            }
+            framesPerBin = Math.max(1, Math.round(format.getFrameRate() * (ENVELOPE_BIN_MS / 1000.0f)));
+            int bufferSize = framesPerBin * frameSize;
+            byte[] buffer = new byte[bufferSize];
+            boolean bigEndian = format.isBigEndian();
+
+            int bytesRead;
+            while ((bytesRead = stream.read(buffer)) != -1) {
+                int framesRead = bytesRead / frameSize;
+                if (framesRead <= 0) {
+                    continue;
+                }
+                int samples = 0;
+                double sumSquares = 0.0;
+                int limit = framesRead * frameSize;
+                for (int i = 0; i + 1 < limit; i += 2) {
+                    int sample;
+                    if (bigEndian) {
+                        sample = (short) ((buffer[i] << 8) | (buffer[i + 1] & 0xFF));
+                    } else {
+                        sample = (short) ((buffer[i + 1] << 8) | (buffer[i] & 0xFF));
+                    }
+                    sumSquares += (double) sample * sample;
+                    samples++;
+                }
+                if (samples == 0) {
+                    bins.add(0.0f);
+                } else {
+                    double rms = Math.sqrt(sumSquares / samples) / 32768.0;
+                    bins.add((float) Math.min(1.0, rms));
+                }
+            }
+        } catch (UnsupportedAudioFileException | IOException ignored) {
+            return null;
+        }
+
+        float[] data = new float[bins.size()];
+        for (int i = 0; i < bins.size(); i++) {
+            data[i] = bins.get(i);
+        }
+        Envelope envelope = new Envelope(data, framesPerBin);
+        envelopeCache.put(fileName, envelope);
+        return envelope;
     }
 
     private static float gainWithVolume(float baseGainDb, float volume) {
