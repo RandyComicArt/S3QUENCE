@@ -65,7 +65,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final Color ROOM_GLASS = new Color(4, 18, 40, 90);
     private static final String MENU_MUSIC_FILE = "main_menu.wav";
     private static final String DUNGEON_MUSIC_FILE = "Loop_drum.wav";
-    private static final String[] ENCOUNTER_MUSIC_FILES = {"guitar_loop.wav", "guitar_loop2.wav", "guitar_loop3.wav"};
+    private static final String[] ENCOUNTER_MUSIC_FILES = {"guitar_loop.wav", "guitar_loop2.wav", "guitar_loop3.wav", "guitar_loop4.wav"};
+    private static final String[] ECHO_MUSIC_FILES = {"guitar_loop4.wav", "echo_song2.wav"};
     private static final String SHOP_MUSIC_FILE = "shop_loop.wav";
 
     private static final Font TITLE_FONT = new Font("Monospaced", Font.BOLD, 40);
@@ -79,8 +80,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int ARENA_W = GameConfig.WIDTH - 240;
     private static final int ARENA_H = 420;
     private static final int ENCOUNTER_ARENA_Y = 170;
-    private static final int ENEMY_BAR_X = ARENA_X + 50;
-    private static final int ENEMY_BAR_W = ARENA_W - 100;
+    private static final int ENEMY_BAR_W = ARENA_W - 180;
+    private static final int ENEMY_BAR_X = ARENA_X + ((ARENA_W - ENEMY_BAR_W) / 2);
     private static final int ENEMY_BAR_H = 50;
 
     private static final int ROOM_X = ARENA_X + 35;
@@ -129,6 +130,11 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final float HEART_BG_ALPHA = 0.28f;
     private static final int SEQUENCE_SYMBOL_SIZE = 76;
     private static final int SEQUENCE_SYMBOL_GAP = 24;
+    private static final long SEQUENCE_PUNCH_IDLE_RESET_MS = 240L;
+    private static final int SEQUENCE_PUNCH_SIZE = SEQUENCE_SYMBOL_SIZE + 20;
+    private static final float SEQUENCE_PUNCH_ALPHA = 0.50f;
+    private static final int SEQUENCE_PUNCH_OFFSET_Y = 220;
+    private static final float SEQUENCE_PUNCH_SCALE = 0.7f;
     private static final int[] RENDER_QUALITY_WIDTHS = {480, 560, 640};
     private static final int[] RENDER_QUALITY_HEIGHTS = {360, 420, 480};
     private static final String[] RENDER_QUALITY_LABELS = {"PERFORMANCE", "BALANCED", "CLARITY"};
@@ -177,6 +183,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private final EnemyKillEffects enemyKillEffects = new EnemyKillEffects();
     private final EnumMap<Direction, BufferedImage> arrowSprites = new EnumMap<>(Direction.class);
     private final EnumMap<Direction, BufferedImage> arrowSpritesGreen = new EnumMap<>(Direction.class);
+    private BufferedImage sequenceIdleSprite;
+    private BufferedImage sequencePunch1Sprite;
+    private BufferedImage sequencePunch2Sprite;
     private BufferedImage fullHeartSprite;
     private BufferedImage halfHeartSprite;
     private BufferedImage emptyHeartSprite;
@@ -226,6 +235,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private long runStartFadeInStartMs;
     private boolean menuTransitionActive;
     private long menuTransitionStartMs;
+    private int sequencePunchFrame;
+    private long lastSequencePunchMs;
     private int coinCount;
     private int lastCoinGain;
     private long lastCoinGainUntilMs;
@@ -264,6 +275,7 @@ public class GamePanel extends JPanel implements ActionListener {
         setBackground(BG);
         setFocusable(true);
         loadArrowSprites();
+        loadSequenceSprites();
         loadHeartSprites();
         loadTransitionSprites();
         loadMenuSprites();
@@ -1002,6 +1014,7 @@ public class GamePanel extends JPanel implements ActionListener {
             case BERSERKER:
                 return ENCOUNTER_MUSIC_FILES[1];
             case ECHO:
+                return ECHO_MUSIC_FILES[random.nextInt(ECHO_MUSIC_FILES.length)];
             case REVERSE:
                 return ENCOUNTER_MUSIC_FILES[2];
             case NORMAL:
@@ -1347,6 +1360,7 @@ public class GamePanel extends JPanel implements ActionListener {
         int totalWidth = (count * SEQUENCE_SYMBOL_SIZE) + ((count - 1) * SEQUENCE_SYMBOL_GAP);
         int startX = ARENA_X + (ARENA_W - totalWidth) / 2;
         int y = ENCOUNTER_ARENA_Y + (ARENA_H - SEQUENCE_SYMBOL_SIZE) / 2 + 52;
+        drawSequencePunchSprite(g2d, y);
         boolean wrongFlash = roundManager.isWrongFlashActive();
         int progressIndex = roundManager.getProgressIndex();
         boolean hideSequence = roundManager.shouldHideSequence();
@@ -1382,6 +1396,51 @@ public class GamePanel extends JPanel implements ActionListener {
                 }
             }
         }
+    }
+
+    private void drawSequencePunchSprite(Graphics2D g2d, int arrowRowY) {
+        BufferedImage sprite = getSequencePunchSprite(System.currentTimeMillis());
+        if (sprite == null) {
+            return;
+        }
+        int size = getSequencePunchSize();
+        int x = 20;
+        int y = ENCOUNTER_ARENA_Y + (ARENA_H - size) / 2 + SEQUENCE_PUNCH_OFFSET_Y;
+        Composite oldComposite = g2d.getComposite();
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, SEQUENCE_PUNCH_ALPHA));
+        g2d.drawImage(sprite, x, y, size, size, null);
+        g2d.setComposite(oldComposite);
+    }
+
+    private BufferedImage getSequencePunchSprite(long now) {
+        if (lastSequencePunchMs <= 0L || now - lastSequencePunchMs > SEQUENCE_PUNCH_IDLE_RESET_MS) {
+            return sequenceIdleSprite != null ? sequenceIdleSprite : sequencePunch1Sprite;
+        }
+        if (sequencePunchFrame == 2 && sequencePunch2Sprite != null) {
+            return sequencePunch2Sprite;
+        }
+        if (sequencePunchFrame == 1 && sequencePunch1Sprite != null) {
+            return sequencePunch1Sprite;
+        }
+        return sequenceIdleSprite != null ? sequenceIdleSprite : sequencePunch2Sprite;
+    }
+
+    private int getSequencePunchSize() {
+        int availableWidth = GameConfig.WIDTH - (HEART_BG_MARGIN_X * 2) - ((MAX_HEARTS - 1) * HEART_GAP);
+        int heartSize = Math.max(24, availableWidth / MAX_HEARTS);
+        int baseSize = Math.max(SEQUENCE_PUNCH_SIZE, heartSize);
+        return Math.max(1, Math.round(baseSize * SEQUENCE_PUNCH_SCALE));
+    }
+
+    private void registerSequencePunch() {
+        long now = System.currentTimeMillis();
+        sequencePunchFrame = lastSequencePunchMs > 0L && sequencePunchFrame == 1 ? 2 : 1;
+        lastSequencePunchMs = now;
+    }
+
+    private void resetSequencePunchState() {
+        sequencePunchFrame = 0;
+        lastSequencePunchMs = 0L;
     }
 
     private void drawRhythmEncounter(Graphics2D g2d) {
@@ -1750,6 +1809,7 @@ public class GamePanel extends JPanel implements ActionListener {
         clearMovementInput();
         lastHitDamage = 0;
         lastHitUntilMs = 0;
+        resetSequencePunchState();
         backdropEffects.clearHueSweeps();
         EncounterEnemy enemy = roomEncounters.get(encounterIndex).getEnemy();
         encounterMusicFile = getEncounterMusicFile(enemy.getArchetype());
@@ -1814,10 +1874,16 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void handleEncounterInput(int symbol) {
         boolean wrongFlashBefore = roundManager.isWrongFlashActive();
+        int progressBefore = roundManager.getProgressIndex();
         RoundCompletion completion = roundManager.handleSymbolInput(symbol);
+        int progressAfter = roundManager.getProgressIndex();
+        if (completion != null || progressAfter > progressBefore) {
+            registerSequencePunch();
+        }
         if (completion == null) {
             boolean triggeredWrongInput = !wrongFlashBefore && roundManager.isWrongFlashActive();
             if (triggeredWrongInput) {
+                resetSequencePunchState();
                 if (mistakeGuardCharges > 0) {
                     mistakeGuardCharges--;
                 } else {
@@ -2267,6 +2333,12 @@ public class GamePanel extends JPanel implements ActionListener {
                 arrowSpritesGreen.put(direction, tintSprite(sprite, GREEN));
             }
         }
+    }
+
+    private void loadSequenceSprites() {
+        sequenceIdleSprite = loadImage("idle.png");
+        sequencePunch1Sprite = loadImage("punch1.png");
+        sequencePunch2Sprite = loadImage("punch2.png");
     }
 
     private void loadHeartSprites() {

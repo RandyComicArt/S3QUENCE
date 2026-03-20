@@ -32,6 +32,7 @@ public final class AudioManager {
     private static final float DEFAULT_MUSIC_GAIN_DB = -5.0f;
     private static final float DEFAULT_SFX_GAIN_DB = -3.0f;
     private static final float ENCOUNTER_LOOP3_GAIN_DB = 5.0f;
+    private static final float ENCOUNTER_LOOP4_GAIN_DB = 3.0f;
     private static final int ENVELOPE_BIN_MS = 33;
     private static final float CLICK_GAIN_JITTER_DB = 2.0f;
     private static final double CLICK_RATE_JITTER = 0.055;
@@ -375,6 +376,9 @@ public final class AudioManager {
             float layerGainDb = DEFAULT_MUSIC_GAIN_DB;
             if ("guitar_loop3.wav".equals(currentLayeredLayerFile)) {
                 layerGainDb += ENCOUNTER_LOOP3_GAIN_DB;
+            }
+            if ("guitar_loop4.wav".equals(currentLayeredLayerFile)) {
+                layerGainDb += ENCOUNTER_LOOP4_GAIN_DB;
             }
             applyGain(layeredLayerClip, gainWithVolume(layerGainDb, layerVolume));
         }
