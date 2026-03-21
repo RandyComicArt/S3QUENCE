@@ -31,6 +31,7 @@ public final class AudioManager {
     private static float layeredAltMix = 0.0f;
     private static final float DEFAULT_MUSIC_GAIN_DB = -5.0f;
     private static final float DEFAULT_SFX_GAIN_DB = -3.0f;
+    private static final float CLICK_BASE_GAIN_DB = DEFAULT_SFX_GAIN_DB - 5.0f;
     private static final float ENCOUNTER_LOOP3_GAIN_DB = 5.0f;
     private static final float ENCOUNTER_LOOP4_GAIN_DB = 3.0f;
     private static final int ENVELOPE_BIN_MS = 33;
@@ -244,10 +245,14 @@ public final class AudioManager {
         playSfxModulated(fileName, DEFAULT_SFX_GAIN_DB, 0.0f, 0.0, 0.0f);
     }
 
+    public static void playSfx(String fileName, float gainDb) {
+        playSfxModulated(fileName, gainDb, 0.0f, 0.0, 0.0f);
+    }
+
     public static void playClickSfx() {
         playSfxModulated(
                 "click.wav",
-                DEFAULT_SFX_GAIN_DB,
+                CLICK_BASE_GAIN_DB,
                 CLICK_GAIN_JITTER_DB,
                 CLICK_RATE_JITTER,
                 CLICK_PAN_JITTER

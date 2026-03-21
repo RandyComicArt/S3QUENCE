@@ -132,9 +132,13 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int SEQUENCE_SYMBOL_GAP = 24;
     private static final long SEQUENCE_PUNCH_IDLE_RESET_MS = 240L;
     private static final int SEQUENCE_PUNCH_SIZE = SEQUENCE_SYMBOL_SIZE + 20;
-    private static final float SEQUENCE_PUNCH_ALPHA = 0.50f;
+    private static final float SEQUENCE_PUNCH_ALPHA = 0.75f;
     private static final int SEQUENCE_PUNCH_OFFSET_Y = 220;
     private static final float SEQUENCE_PUNCH_SCALE = 0.7f;
+    private static final int[] SEQUENCE_PUNCH_PATTERN = {1, 2, 1, 2};
+    private static final String[] FINISHER_SFX_FILES = {"finisher1.wav", "finisher2.wav", "finisher3.wav", "finisher4.wav", "finisher5.wav"};
+    private static final float FINISHER_SFX_GAIN_DB = -3.0f;
+    private static final float[] FINISHER_SFX_GAIN_OFFSETS_DB = {0.0f, 5.0f, 0.0f, 0.0f, 5.0f};
     private static final int[] RENDER_QUALITY_WIDTHS = {480, 560, 640};
     private static final int[] RENDER_QUALITY_HEIGHTS = {360, 420, 480};
     private static final String[] RENDER_QUALITY_LABELS = {"PERFORMANCE", "BALANCED", "CLARITY"};
@@ -186,6 +190,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage sequenceIdleSprite;
     private BufferedImage sequencePunch1Sprite;
     private BufferedImage sequencePunch2Sprite;
+    private BufferedImage sequencePunch3Sprite;
     private BufferedImage fullHeartSprite;
     private BufferedImage halfHeartSprite;
     private BufferedImage emptyHeartSprite;
@@ -236,7 +241,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private boolean menuTransitionActive;
     private long menuTransitionStartMs;
     private int sequencePunchFrame;
+    private int sequencePunchPatternIndex = -1;
     private long lastSequencePunchMs;
+    private int lastFinisherSfxIndex = -1;
     private int coinCount;
     private int lastCoinGain;
     private long lastCoinGainUntilMs;
@@ -1419,10 +1426,19 @@ public class GamePanel extends JPanel implements ActionListener {
         if (sequencePunchFrame == 2 && sequencePunch2Sprite != null) {
             return sequencePunch2Sprite;
         }
+        if (sequencePunchFrame == 3 && sequencePunch3Sprite != null) {
+            return sequencePunch3Sprite;
+        }
         if (sequencePunchFrame == 1 && sequencePunch1Sprite != null) {
             return sequencePunch1Sprite;
         }
-        return sequenceIdleSprite != null ? sequenceIdleSprite : sequencePunch2Sprite;
+        if (sequenceIdleSprite != null) {
+            return sequenceIdleSprite;
+        }
+        if (sequencePunch1Sprite != null) {
+            return sequencePunch1Sprite;
+        }
+        return sequencePunch2Sprite != null ? sequencePunch2Sprite : sequencePunch3Sprite;
     }
 
     private int getSequencePunchSize() {
@@ -1432,14 +1448,25 @@ public class GamePanel extends JPanel implements ActionListener {
         return Math.max(1, Math.round(baseSize * SEQUENCE_PUNCH_SCALE));
     }
 
-    private void registerSequencePunch() {
+    private void registerSequencePunch(boolean sequenceComplete) {
         long now = System.currentTimeMillis();
-        sequencePunchFrame = lastSequencePunchMs > 0L && sequencePunchFrame == 1 ? 2 : 1;
+        if (sequenceComplete) {
+            sequencePunchFrame = 3;
+            sequencePunchPatternIndex = -1;
+        } else {
+            if (sequencePunchPatternIndex < 0) {
+                sequencePunchPatternIndex = 0;
+            } else {
+                sequencePunchPatternIndex = (sequencePunchPatternIndex + 1) % SEQUENCE_PUNCH_PATTERN.length;
+            }
+            sequencePunchFrame = SEQUENCE_PUNCH_PATTERN[sequencePunchPatternIndex];
+        }
         lastSequencePunchMs = now;
     }
 
     private void resetSequencePunchState() {
         sequencePunchFrame = 0;
+        sequencePunchPatternIndex = -1;
         lastSequencePunchMs = 0L;
     }
 
@@ -1575,11 +1602,16 @@ public class GamePanel extends JPanel implements ActionListener {
                     return;
                 }
                 if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive) {
-                    AudioManager.playClickSfx();
+                    List<Integer> sequence = roundManager.getSequence();
+                    int progressIndex = roundManager.getProgressIndex();
+                    boolean isLastInput = !sequence.isEmpty() && progressIndex >= sequence.size() - 1;
+                    if (!isLastInput) {
+                        AudioManager.playClickSfx();
+                    }
                     backdropEffects.spawnInputRipple(
                             direction.ordinal(),
-                            roundManager.getSequence(),
-                            roundManager.getProgressIndex(),
+                            sequence,
+                            progressIndex,
                             ARENA_X,
                             ENCOUNTER_ARENA_Y,
                             ARENA_W,
@@ -1878,7 +1910,7 @@ public class GamePanel extends JPanel implements ActionListener {
         RoundCompletion completion = roundManager.handleSymbolInput(symbol);
         int progressAfter = roundManager.getProgressIndex();
         if (completion != null || progressAfter > progressBefore) {
-            registerSequencePunch();
+            registerSequencePunch(completion != null);
         }
         if (completion == null) {
             boolean triggeredWrongInput = !wrongFlashBefore && roundManager.isWrongFlashActive();
@@ -1912,6 +1944,18 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         boolean enemyDefeated = currentNode.isCleared();
+        if (completion != null && !enemyDefeated) {
+            int nextIndex = random.nextInt(FINISHER_SFX_FILES.length);
+            if (FINISHER_SFX_FILES.length > 1 && nextIndex == lastFinisherSfxIndex) {
+                nextIndex = (nextIndex + 1 + random.nextInt(FINISHER_SFX_FILES.length - 1)) % FINISHER_SFX_FILES.length;
+            }
+            lastFinisherSfxIndex = nextIndex;
+            float offset = 0.0f;
+            if (nextIndex < FINISHER_SFX_GAIN_OFFSETS_DB.length) {
+                offset = FINISHER_SFX_GAIN_OFFSETS_DB[nextIndex];
+            }
+            AudioManager.playSfx(FINISHER_SFX_FILES[nextIndex], FINISHER_SFX_GAIN_DB + offset);
+        }
         int coinReward = calculateComboCoinReward(completion);
         if (coinReward > 0) {
             coinCount += coinReward;
@@ -2339,6 +2383,7 @@ public class GamePanel extends JPanel implements ActionListener {
         sequenceIdleSprite = loadImage("idle.png");
         sequencePunch1Sprite = loadImage("punch1.png");
         sequencePunch2Sprite = loadImage("punch2.png");
+        sequencePunch3Sprite = loadImage("punch3.png");
     }
 
     private void loadHeartSprites() {
