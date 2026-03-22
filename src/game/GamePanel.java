@@ -8,6 +8,7 @@ import game.model.Direction;
 import game.model.EnemyArchetype;
 import game.model.EncounterEnemy;
 import game.model.EncounterNode;
+import game.model.ItemArchetype;
 import game.model.ScreenState;
 import game.model.ShopOption;
 import game.visual.BackdropEffects;
@@ -106,8 +107,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final double TIMER_REFILL_ANIM_PER_SECOND = 3600.0;
     private static final int MENU_ITEM_START = 0;
     private static final int MENU_ITEM_TEST_ENEMY = 1;
-    private static final int MENU_ITEM_SETTINGS = 2;
-    private static final int MENU_ITEM_COUNT = 3;
+    private static final int MENU_ITEM_TEST_ITEM = 2;
+    private static final int MENU_ITEM_SETTINGS = 3;
+    private static final int MENU_ITEM_COUNT = 4;
     private static final int SETTINGS_TAB_VIDEO = 0;
     private static final int SETTINGS_TAB_AUDIO = 1;
     private static final int SETTINGS_ITEM_TAB = 0;
@@ -236,6 +238,12 @@ public class GamePanel extends JPanel implements ActionListener {
     private long lastTickNanos = System.nanoTime();
     private int lastHitDamage;
     private long lastHitUntilMs;
+    private int displayedEnemyHealth = -1;
+    private EncounterEnemy displayedEnemyRef;
+    private int lastPoisonDamage;
+    private long lastPoisonUntilMs;
+    private int poisonTicksRemaining;
+    private long nextPoisonTickMs;
     private boolean runStartFadeInActive;
     private long runStartFadeInStartMs;
     private boolean menuTransitionActive;
@@ -263,6 +271,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private long mistakeGuardCharges;
     private long nextEncounterTimeBonusMs;
     private EnemyArchetype forcedTestEnemy;
+    private ItemArchetype forcedTestItem;
     private Direction doorDirection = Direction.RIGHT;
     private int sceneBufferWidth = RENDER_QUALITY_WIDTHS[DEFAULT_RENDER_QUALITY_INDEX];
     private int sceneBufferHeight = RENDER_QUALITY_HEIGHTS[DEFAULT_RENDER_QUALITY_INDEX];
@@ -648,6 +657,7 @@ public class GamePanel extends JPanel implements ActionListener {
             if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && roundManager.hasTimedOut()) {
                 handleEncounterTimeout();
             }
+            updateItemEffects();
         }
         if (runStartFadeInActive) {
             long fadeElapsedMs = System.currentTimeMillis() - runStartFadeInStartMs;
@@ -660,6 +670,7 @@ public class GamePanel extends JPanel implements ActionListener {
         updateEncounterMusicMix(deltaSeconds);
         updateShopMusicFade(deltaSeconds);
         updateTimerBarAnimation(deltaSeconds);
+        updateEnemyHealthAnimation(deltaSeconds);
         updateBackgroundMusic();
         backdropEffects.update();
         updateEnemyKillEffects();
@@ -681,7 +692,14 @@ public class GamePanel extends JPanel implements ActionListener {
                 menuLeft,
                 menuStartY + menuLineStep
         );
-        drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", menuLeft, menuStartY + (menuLineStep * 2));
+        drawMenuOption(
+                g2d,
+                MENU_ITEM_TEST_ITEM,
+                "TEST ITEM: " + getTestItemMenuLabel(),
+                menuLeft,
+                menuStartY + (menuLineStep * 2)
+        );
+        drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", menuLeft, menuStartY + (menuLineStep * 3));
     }
 
     private void drawSettingsMenu(Graphics2D g2d) {
@@ -700,10 +718,17 @@ public class GamePanel extends JPanel implements ActionListener {
                 menuLeft,
                 menuStartY + menuLineStep
         );
-        drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", menuLeft, menuStartY + (menuLineStep * 2));
+        drawMenuOption(
+                g2d,
+                MENU_ITEM_TEST_ITEM,
+                "TEST ITEM: " + getTestItemMenuLabel(),
+                menuLeft,
+                menuStartY + (menuLineStep * 2)
+        );
+        drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", menuLeft, menuStartY + (menuLineStep * 3));
 
         int settingsLeft = menuLeft;
-        int settingsStartY = menuStartY + (menuLineStep * 3) + 30;
+        int settingsStartY = menuStartY + (menuLineStep * 4) + 30;
         int settingsLineStep = 44;
         int revealOffset = (int) Math.round(28 * (1.0 - eased));
         float alpha = (float) Math.max(0.0, Math.min(1.0, eased));
@@ -879,6 +904,14 @@ public class GamePanel extends JPanel implements ActionListener {
                 cycleTestEnemy(1);
                 AudioManager.playSfx("main_toggle_tab.wav");
             }
+        } else if (menuSelectionIndex == MENU_ITEM_TEST_ITEM) {
+            if (direction == Direction.LEFT) {
+                cycleTestItem(-1);
+                AudioManager.playSfx("main_toggle_tab.wav");
+            } else if (direction == Direction.RIGHT) {
+                cycleTestItem(1);
+                AudioManager.playSfx("main_toggle_tab.wav");
+            }
         }
         if (menuSelectionIndex != previousIndex) {
             AudioManager.playSfx("tab_switch.wav");
@@ -890,6 +923,9 @@ public class GamePanel extends JPanel implements ActionListener {
             startRun();
         } else if (menuSelectionIndex == MENU_ITEM_TEST_ENEMY) {
             cycleTestEnemy(1);
+            AudioManager.playSfx("main_toggle_tab.wav");
+        } else if (menuSelectionIndex == MENU_ITEM_TEST_ITEM) {
+            cycleTestItem(1);
             AudioManager.playSfx("main_toggle_tab.wav");
         } else if (menuSelectionIndex == MENU_ITEM_SETTINGS) {
             AudioManager.playSfx("main_toggle_tab.wav");
@@ -1003,6 +1039,23 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private String getTestEnemyMenuLabel() {
         return forcedTestEnemy == null ? "OFF" : forcedTestEnemy.getLabel();
+    }
+
+    private void cycleTestItem(int delta) {
+        ItemArchetype[] items = ItemArchetype.values();
+        int currentIndex = forcedTestItem == null ? -1 : forcedTestItem.ordinal();
+        int nextIndex = currentIndex + delta;
+        if (nextIndex < -1) {
+            nextIndex = items.length - 1;
+        } else if (nextIndex >= items.length) {
+            nextIndex = -1;
+        }
+        forcedTestItem = nextIndex == -1 ? null : items[nextIndex];
+        clearActiveItemEffects();
+    }
+
+    private String getTestItemMenuLabel() {
+        return forcedTestItem == null ? "OFF" : forcedTestItem.getLabel();
     }
 
     private String getRenderQualityLabel() {
@@ -1304,7 +1357,8 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setColor(new Color(255, 116, 208, 50));
         g2d.fillRect(ENEMY_BAR_X, enemyBarY, ENEMY_BAR_W, ENEMY_BAR_H);
 
-        double ratio = Math.max(0.0, Math.min(1.0, enemy.getHealthRatio()));
+        int displayedHealth = displayedEnemyHealth >= 0 ? displayedEnemyHealth : enemy.getHealth();
+        double ratio = Math.max(0.0, Math.min(1.0, displayedHealth / (double) enemy.getMaxHealth()));
         int fillWidth = (int) Math.round((ENEMY_BAR_W - 4) * ratio);
         if (fillWidth > 0) {
             g2d.setColor(new Color(255, 92, 198, 78));
@@ -1312,9 +1366,10 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         int pendingDamage = Math.max(0, roundManager.getPendingDamage());
-        int previewDamage = Math.min(enemy.getHealth(), pendingDamage);
+        int baseHealth = Math.max(0, displayedHealth);
+        int previewDamage = Math.min(baseHealth, pendingDamage);
         if (previewDamage > 0 && fillWidth > 0) {
-            int previewHealth = Math.max(0, enemy.getHealth() - previewDamage);
+            int previewHealth = Math.max(0, baseHealth - previewDamage);
             int previewWidth = (int) Math.round((ENEMY_BAR_W - 4) * (previewHealth / (double) enemy.getMaxHealth()));
             previewWidth = Math.max(0, Math.min(fillWidth, previewWidth));
             int previewSegmentWidth = fillWidth - previewWidth;
@@ -1346,14 +1401,22 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.setColor(new Color(255, 122, 200, alpha));
             drawCenteredString(g2d, "-" + lastHitDamage, GameConfig.WIDTH / 2, enemyBarY - 18 - yOffset);
         }
-        if (now < lastCoinGainUntilMs && lastCoinGain != 0) {
-            double popProgress = 1.0 - ((lastCoinGainUntilMs - now) / 760.0);
+        if (poisonTicksRemaining > 0 && !enemy.isDefeated()) {
+            double pulse = 0.5 + (0.5 * Math.sin(now / 120.0));
+            int pulseAlpha = (int) Math.round(90 + (70 * pulse));
+            g2d.setColor(new Color(80, 255, 140, pulseAlpha));
+            g2d.fillRect(ENEMY_BAR_X + 2, enemyBarY + ENEMY_BAR_H - 6, ENEMY_BAR_W - 4, 4);
+            g2d.setFont(SMALL_FONT);
+            g2d.setColor(new Color(120, 255, 170, 200));
+            g2d.drawString("POISON", ENEMY_BAR_X + ENEMY_BAR_W - 82, enemyBarY - 10);
+        }
+        if (now < lastPoisonUntilMs && lastPoisonDamage > 0) {
+            double popProgress = 1.0 - ((lastPoisonUntilMs - now) / 520.0);
             int yOffset = (int) Math.round(12 * popProgress);
-            int alpha = (int) Math.round(255 * (1.0 - popProgress));
+            int alpha = (int) Math.round(220 * (1.0 - popProgress));
             alpha = Math.max(0, Math.min(255, alpha));
-            String deltaLabel = (lastCoinGain > 0 ? "+" : "") + lastCoinGain + " COINS";
-            g2d.setColor(new Color(255, 214, 112, alpha));
-            drawCenteredString(g2d, deltaLabel, GameConfig.WIDTH / 2, enemyBarY - 34 - yOffset);
+            g2d.setColor(new Color(90, 255, 140, alpha));
+            drawCenteredString(g2d, "-" + lastPoisonDamage, GameConfig.WIDTH / 2, enemyBarY - 36 - yOffset);
         }
     }
 
@@ -1655,6 +1718,7 @@ public class GamePanel extends JPanel implements ActionListener {
         shopSelectionIndex = 0;
         lastCoinGain = 0;
         lastCoinGainUntilMs = 0L;
+        clearActiveItemEffects();
         clearMovementInput();
         clearTimerBarAnimation();
         menuTransitionActive = false;
@@ -1841,6 +1905,7 @@ public class GamePanel extends JPanel implements ActionListener {
         clearMovementInput();
         lastHitDamage = 0;
         lastHitUntilMs = 0;
+        clearActiveItemEffects();
         resetSequencePunchState();
         backdropEffects.clearHueSweeps();
         EncounterEnemy enemy = roomEncounters.get(encounterIndex).getEnemy();
@@ -1942,6 +2007,7 @@ public class GamePanel extends JPanel implements ActionListener {
             lastHitDamage = 0;
             lastHitUntilMs = 0;
         }
+        applyItemOnHit(currentNode, damage);
 
         boolean enemyDefeated = currentNode.isCleared();
         if (completion != null && !enemyDefeated) {
@@ -1966,24 +2032,85 @@ public class GamePanel extends JPanel implements ActionListener {
             }*/
         }
         if (enemyDefeated) {
-            spawnEnemyDefeatEffect(currentNode);
-            AudioManager.playSfx("enemy_defeated.wav");
+            finalizeEncounterIfEnemyDefeated(currentNode);
         } else if (currentNode.getEnemy().getArchetype().isTimeRecoveryEnabled()) {
             AudioManager.playSfx("bar_fill.wav");
-        }
-
-        if (enemyDefeated) {
-            activeEncounterIndex = -1;
-            clearMovementInput();
-            clearTimerBarAnimation();
-            screen = ScreenState.DUNGEON;
-            encounterBestedTransitionActive = true;
-            encounterBestedTransitionStartMs = System.currentTimeMillis();
         }
     }
 
     private void handleEncounterTimeout() {
         applyPlayerDamage(2, true);
+    }
+
+    private void applyItemOnHit(EncounterNode node, int damage) {
+        if (damage <= 0 || node == null || node.isCleared()) {
+            return;
+        }
+        if (forcedTestItem == ItemArchetype.POISON) {
+            poisonTicksRemaining += GameConfig.POISON_TICKS_PER_HIT;
+            if (poisonTicksRemaining < 0) {
+                poisonTicksRemaining = GameConfig.POISON_TICKS_PER_HIT;
+            }
+            if (nextPoisonTickMs <= 0L) {
+                nextPoisonTickMs = System.currentTimeMillis() + GameConfig.POISON_TICK_INTERVAL_MS;
+            }
+        }
+    }
+
+    private void updateItemEffects() {
+        if (forcedTestItem != ItemArchetype.POISON) {
+            clearActiveItemEffects();
+            return;
+        }
+        if (screen != ScreenState.ENCOUNTER || encounterIntroActive) {
+            clearActiveItemEffects();
+            return;
+        }
+        if (poisonTicksRemaining <= 0) {
+            return;
+        }
+
+        EncounterNode currentNode = getActiveEncounterNode();
+        if (currentNode == null || currentNode.isCleared()) {
+            clearActiveItemEffects();
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (nextPoisonTickMs <= 0L) {
+            nextPoisonTickMs = now + GameConfig.POISON_TICK_INTERVAL_MS;
+            return;
+        }
+        if (now < nextPoisonTickMs) {
+            return;
+        }
+
+        int tickDamage = Math.max(0, GameConfig.POISON_DAMAGE_PER_TICK);
+        if (tickDamage > 0) {
+            currentNode.getEnemy().applyDamage(tickDamage);
+            lastPoisonDamage = tickDamage;
+            lastPoisonUntilMs = now + 520L;
+        }
+        poisonTicksRemaining = Math.max(0, poisonTicksRemaining - 1);
+
+        if (currentNode.isCleared()) {
+            clearActiveItemEffects();
+            finalizeEncounterIfEnemyDefeated(currentNode);
+            return;
+        }
+
+        if (poisonTicksRemaining > 0) {
+            nextPoisonTickMs = now + GameConfig.POISON_TICK_INTERVAL_MS;
+        } else {
+            nextPoisonTickMs = 0L;
+        }
+    }
+
+    private void clearActiveItemEffects() {
+        poisonTicksRemaining = 0;
+        nextPoisonTickMs = 0L;
+        lastPoisonDamage = 0;
+        lastPoisonUntilMs = 0L;
     }
 
     private void applyPlayerDamage(int amountUnits, boolean resetTimerOnSurvive) {
@@ -2008,6 +2135,20 @@ public class GamePanel extends JPanel implements ActionListener {
             roundManager.startGame(false);
             resetTimerBarAnimation();
         }
+    }
+
+    private void finalizeEncounterIfEnemyDefeated(EncounterNode node) {
+        if (node == null || !node.isCleared()) {
+            return;
+        }
+        spawnEnemyDefeatEffect(node);
+        AudioManager.playSfx("enemy_defeated.wav");
+        activeEncounterIndex = -1;
+        clearMovementInput();
+        clearTimerBarAnimation();
+        screen = ScreenState.DUNGEON;
+        encounterBestedTransitionActive = true;
+        encounterBestedTransitionStartMs = System.currentTimeMillis();
     }
 
     private void spawnEnemyDefeatEffect(EncounterNode node) {
@@ -2063,6 +2204,13 @@ public class GamePanel extends JPanel implements ActionListener {
             return null;
         }
         return roomEncounters.get(activeEncounterIndex).getEnemy();
+    }
+
+    private EncounterNode getActiveEncounterNode() {
+        if (activeEncounterIndex < 0 || activeEncounterIndex >= roomEncounters.size()) {
+            return null;
+        }
+        return roomEncounters.get(activeEncounterIndex);
     }
 
     private boolean intersectsAnyEncounter(Rectangle candidate) {
@@ -2246,6 +2394,35 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         displayedTimerMs = Math.max(0L, Math.min(duration, displayedTimerMs));
+    }
+
+    private void updateEnemyHealthAnimation(double deltaSeconds) {
+        if (screen != ScreenState.ENCOUNTER) {
+            displayedEnemyHealth = -1;
+            displayedEnemyRef = null;
+            return;
+        }
+        EncounterEnemy enemy = getActiveEncounterEnemy();
+        if (enemy == null) {
+            displayedEnemyHealth = -1;
+            displayedEnemyRef = null;
+            return;
+        }
+        if (displayedEnemyRef != enemy || displayedEnemyHealth < 0) {
+            displayedEnemyRef = enemy;
+            displayedEnemyHealth = enemy.getHealth();
+            return;
+        }
+
+        int actualHealth = enemy.getHealth();
+        if (displayedEnemyHealth <= actualHealth) {
+            displayedEnemyHealth = actualHealth;
+            return;
+        }
+
+        double dropPerSecond = Math.max(40.0, enemy.getMaxHealth() * 5.0);
+        int drop = Math.max(1, (int) Math.round(dropPerSecond * deltaSeconds));
+        displayedEnemyHealth = Math.max(actualHealth, displayedEnemyHealth - drop);
     }
 
     private void resetTimerBarAnimation() {
@@ -2434,6 +2611,17 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.drawString("GUARDS " + mistakeGuardCharges, 28, 106);
         if (nextEncounterTimeBonusMs > 0L) {
             g2d.drawString("NEXT +" + nextEncounterTimeBonusMs + "MS", 28, 126);
+        }
+
+        long now = System.currentTimeMillis();
+        if (now < lastCoinGainUntilMs && lastCoinGain != 0) {
+            double popProgress = 1.0 - ((lastCoinGainUntilMs - now) / 760.0);
+            int yOffset = (int) Math.round(10 * popProgress);
+            int alpha = (int) Math.round(255 * (1.0 - popProgress));
+            alpha = Math.max(0, Math.min(255, alpha));
+            String deltaLabel = (lastCoinGain > 0 ? "+" : "") + lastCoinGain + " COINS";
+            g2d.setColor(new Color(255, 214, 112, alpha));
+            g2d.drawString(deltaLabel, 28, 70 - yOffset);
         }
     }
 
