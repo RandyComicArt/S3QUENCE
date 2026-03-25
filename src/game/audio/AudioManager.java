@@ -249,6 +249,31 @@ public final class AudioManager {
         playSfxModulated(fileName, gainDb, 0.0f, 0.0, 0.0f);
     }
 
+    public static synchronized Clip playManagedSfx(String fileName, float gainDb) {
+        Clip clip = createSfxClip(fileName, gainDb, 0.0f, 0.0, 0.0f);
+        if (clip != null) {
+            clip.start();
+        }
+        return clip;
+    }
+
+    public static synchronized void setManagedSfxGain(Clip clip, float gainDb) {
+        if (clip == null || !clip.isOpen()) {
+            return;
+        }
+        applyGain(clip, gainWithVolume(gainDb, masterVolume * sfxVolume));
+    }
+
+    public static synchronized void stopManagedSfx(Clip clip) {
+        if (clip == null) {
+            return;
+        }
+        clip.stop();
+        if (clip.isOpen()) {
+            clip.close();
+        }
+    }
+
     public static void playClickSfx() {
         playSfxModulated(
                 "click.wav",
@@ -266,9 +291,22 @@ public final class AudioManager {
             double rateJitter,
             float panJitter
     ) {
+        Clip clip = createSfxClip(fileName, baseGainDb, gainJitterDb, rateJitter, panJitter);
+        if (clip != null) {
+            clip.start();
+        }
+    }
+
+    private static Clip createSfxClip(
+            String fileName,
+            float baseGainDb,
+            float gainJitterDb,
+            double rateJitter,
+            float panJitter
+    ) {
         URL url = findAudioUrl(fileName);
         if (url == null) {
-            return;
+            return null;
         }
         try (AudioInputStream stream = openPlayableStream(url)) {
             Clip clip = AudioSystem.getClip();
@@ -285,9 +323,10 @@ public final class AudioManager {
                     clip.close();
                 }
             });
-            clip.start();
+            return clip;
         } catch (UnsupportedAudioFileException | IOException | LineUnavailableException ignored) {
             // Keep gameplay resilient if a sound fails.
+            return null;
         }
     }
 

@@ -22,6 +22,7 @@ public class RoundManager {
     private long wrongFlashUntilMs;
     private int pendingDamage;
     private long lastCorrectInputTimeMs;
+    private long lastCorrectCadenceMs;
     private boolean sequenceCompleteHoldActive;
     private long sequenceCompleteHoldUntilMs;
     private long heldTimeLeftMs;
@@ -71,6 +72,7 @@ public class RoundManager {
         if (sequence.get(expectedIndex) == input) {
             long cadenceReferenceMs = lastCorrectInputTimeMs > 0L ? lastCorrectInputTimeMs : sequenceStartTimeMs;
             long cadenceMs = Math.max(0L, now - cadenceReferenceMs);
+            lastCorrectCadenceMs = cadenceMs;
             int increment = DamageCalculator.calculatePotentialIncrement(sequence.size(), progressIndex, cadenceMs);
             pendingDamage += increment;
             if (activeArchetype.isTimeRecoveryEnabled()) {
@@ -183,6 +185,10 @@ public class RoundManager {
         return pendingDamage;
     }
 
+    public long getLastCorrectCadenceMs() {
+        return Math.max(0L, lastCorrectCadenceMs);
+    }
+
     private void startNewSequence() {
         sequence.clear();
         int sequenceLength = random.nextInt(maxSequenceLength - minSequenceLength + 1) + minSequenceLength;
@@ -204,6 +210,7 @@ public class RoundManager {
     private void clearComboState() {
         pendingDamage = 0;
         lastCorrectInputTimeMs = 0L;
+        lastCorrectCadenceMs = 0L;
     }
 
     private void updateRuntimeState() {

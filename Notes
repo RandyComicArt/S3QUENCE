@@ -1,0 +1,34 @@
+Functions/Features to add:
+- add pausing and resume functionality
+- create save files where the player can save his progress
+- intro and outro animations to the shop
+
+Things to Rework:
+- dungeon scene
+- game over screen
+- shop screen
+
+Continue Developing:
+- icons for items (such as a syringe for the poison item)
+
+Items I want to add:
+Note: some items, such as Preemtive strike act as sort of one and done items, you dont need to level them as
+    leveling wouldn't benefit them in any way, they act more like perks,
+    whereas other items can be leveled -> increasing stats
+
+Non-Levelling items:
+- Preemptive Strike: if the potential damage exceeds the enemy health bar -> kill the enemy (no need to complete sequence)
+- Auto-Correct: Once per encounter, a wrong input is ignored and will actually succeed (converted to correct input).
+
+Levelled items:
+- Chilling Jab: executing a sequence slows/pauses the timer briefly by X milliseconds
+- Initial Surge: Deal +X% damage while enemy timer is above 80%
+- Combo Catalyst: For every correct key, increase damage by +X% (thinking start level 1 with low number like 0.1%)
+    for the rest of the sequence. Hitting an incorrect key resets the damage boost back to 0%
+- Lucky Duck: increases critical hit chance by +X% (critical hits deal double damage)
+
+Idea for Items: dont allow the player to get all items, i will limit them in a way, similar
+to games like hades, where the player can only have one attack, one dash attack, etc...
+but here will will have item slots, they will start with one item slot to hold and level
+any item that they get, then they can find more item slots throughout the run or upgrades
+in home base in between runs

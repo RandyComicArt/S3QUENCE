@@ -26,7 +26,10 @@ public final class GameConfig {
     public static final int ENEMY_HEALTH_PER_ROOM = 11;
     public static final int ENEMY_HEALTH_VARIANCE = 32;
     public static final double DAMAGE_OUTPUT_SCALE = 1.12;
-    public static final int POISON_TICKS_PER_HIT = 3;
+    public static final double ITEM_BUILDUP_TARGET = 100.0;
+    public static final double ITEM_BUILDUP_OUTPUT_SCALE = 1.0;
+    public static final double ITEM_BUILDUP_DECAY_PER_SECOND = 12.0;
+    public static final int POISON_TICKS_PER_PROC = 3;
     public static final int POISON_DAMAGE_PER_TICK = 2;
     public static final long POISON_TICK_INTERVAL_MS = 320L;
 

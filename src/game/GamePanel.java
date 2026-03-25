@@ -2,6 +2,8 @@ package game;
 
 import game.audio.AudioManager;
 import game.config.GameConfig;
+import game.input.ControllerInputManager;
+import game.logic.DamageCalculator;
 import game.logic.RoundCompletion;
 import game.logic.RoundManager;
 import game.model.Direction;
@@ -15,8 +17,13 @@ import game.visual.BackdropEffects;
 import game.visual.EnemyKillEffects;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
+import javax.imageio.metadata.IIOMetadata;
+import javax.sound.sampled.Clip;
 import javax.swing.AbstractAction;
 import javax.swing.ActionMap;
+import javax.swing.ImageIcon;
 import javax.swing.InputMap;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
@@ -30,6 +37,7 @@ import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Image;
 import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
 import java.awt.Rectangle;
@@ -46,10 +54,13 @@ import java.awt.geom.RoundRectangle2D;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
+import java.util.Iterator;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Random;
+import org.w3c.dom.NamedNodeMap;
+import org.w3c.dom.Node;
 
 @SuppressWarnings({"serial", "this-escape"})
 public class GamePanel extends JPanel implements ActionListener {
@@ -103,6 +114,15 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final long RUN_START_FADE_IN_MS = 1000L;
     private static final long MENU_TRANSITION_MS = 520L;
     private static final long MENU_TRANSITION_SWITCH_MS = MENU_TRANSITION_MS / 2;
+    private static final long OPENING_TEXT_SEQUENCE_MS = 2200L;
+    private static final long OPENING_STATIC_SEQUENCE_FALLBACK_MS = 520L;
+    private static final long OPENING_STATIC_SOUND_FADE_LEAD_MS = 320L;
+    private static final long OPENING_STATIC_SOUND_FADE_TAIL_MS = 220L;
+    private static final long OPENING_FADE_IN_MS = 260L;
+    private static final long OPENING_FADE_OUT_MS = 520L;
+    private static final long START_RUN_TRANSITION_MS = 1250L;
+    private static final long START_RUN_TRANSITION_SWITCH_MS = 420L;
+    private static final long START_RUN_MUSIC_DELAY_MS = 320L;
     private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
     private static final double TIMER_REFILL_ANIM_PER_SECOND = 3600.0;
     private static final int MENU_ITEM_START = 0;
@@ -130,6 +150,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int HEART_BG_MARGIN_X = 20;
     private static final int HEART_BG_Y = 24;
     private static final float HEART_BG_ALPHA = 0.28f;
+    private static final int ITEM_CHARGE_BAR_WIDTH = 76;
+    private static final int ITEM_CHARGE_BAR_HEIGHT = 7;
     private static final int SEQUENCE_SYMBOL_SIZE = 76;
     private static final int SEQUENCE_SYMBOL_GAP = 24;
     private static final long SEQUENCE_PUNCH_IDLE_RESET_MS = 240L;
@@ -187,6 +209,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private final RoundManager roundManager = new RoundManager();
     private final BackdropEffects backdropEffects = new BackdropEffects();
     private final EnemyKillEffects enemyKillEffects = new EnemyKillEffects();
+    private final ControllerInputManager controllerInputManager = new ControllerInputManager();
     private final EnumMap<Direction, BufferedImage> arrowSprites = new EnumMap<>(Direction.class);
     private final EnumMap<Direction, BufferedImage> arrowSpritesGreen = new EnumMap<>(Direction.class);
     private BufferedImage sequenceIdleSprite;
@@ -198,6 +221,12 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage emptyHeartSprite;
     private BufferedImage megamanTransitionSprite;
     private BufferedImage startMenuSprite;
+    private BufferedImage openingTextSprite;
+    private Image openingStaticGif;
+    private long openingStaticSequenceMs = OPENING_STATIC_SEQUENCE_FALLBACK_MS;
+    private BufferedImage poisonIconSprite;
+    private BufferedImage poisonIconAttack1Sprite;
+    private BufferedImage poisonIconAttack2Sprite;
     private BufferedImage sceneBuffer;
     private BufferedImage crtWarpBuffer;
     private BufferedImage crtOverlayBuffer;
@@ -213,7 +242,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private final Random random = new Random();
     private final List<EncounterNode> roomEncounters = new ArrayList<>();
 
-    private ScreenState screen = ScreenState.MENU;
+    private ScreenState screen = ScreenState.OPENING;
     private int roomNumber = 1;
     private double playerX;
     private double playerY;
@@ -231,10 +260,14 @@ public class GamePanel extends JPanel implements ActionListener {
     private long roomIntroStartMs;
     private Direction pendingRoomEntryDirection;
     private Direction roomIntroDirection;
-    private boolean moveUpHeld;
-    private boolean moveDownHeld;
-    private boolean moveLeftHeld;
-    private boolean moveRightHeld;
+    private boolean keyboardMoveUpHeld;
+    private boolean keyboardMoveDownHeld;
+    private boolean keyboardMoveLeftHeld;
+    private boolean keyboardMoveRightHeld;
+    private boolean controllerMoveUpHeld;
+    private boolean controllerMoveDownHeld;
+    private boolean controllerMoveLeftHeld;
+    private boolean controllerMoveRightHeld;
     private long lastTickNanos = System.nanoTime();
     private int lastHitDamage;
     private long lastHitUntilMs;
@@ -242,12 +275,17 @@ public class GamePanel extends JPanel implements ActionListener {
     private EncounterEnemy displayedEnemyRef;
     private int lastPoisonDamage;
     private long lastPoisonUntilMs;
+    private long lastPoisonAnimationStartMs;
     private int poisonTicksRemaining;
     private long nextPoisonTickMs;
+    private double poisonBuildUp;
     private boolean runStartFadeInActive;
     private long runStartFadeInStartMs;
+    private long openingSequenceStartMs;
     private boolean menuTransitionActive;
     private long menuTransitionStartMs;
+    private boolean startRunTransitionActive;
+    private long startRunTransitionStartMs;
     private int sequencePunchFrame;
     private int sequencePunchPatternIndex = -1;
     private long lastSequencePunchMs;
@@ -285,6 +323,11 @@ public class GamePanel extends JPanel implements ActionListener {
     private int masterVolumeIndex = DEFAULT_MASTER_VOLUME_INDEX;
     private int musicVolumeIndex = DEFAULT_MUSIC_VOLUME_INDEX;
     private int sfxVolumeIndex = DEFAULT_SFX_VOLUME_INDEX;
+    private boolean openingStaticSoundPlayed;
+    private boolean openingStaticSoundFadeStarted;
+    private Clip openingStaticSoundClip;
+    private volatile boolean controllerPrewarmStarted;
+    private volatile boolean controllerPrewarmFinished;
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -298,7 +341,9 @@ public class GamePanel extends JPanel implements ActionListener {
         setupMovementDispatcher();
         setupKeyBindings();
         applyAudioVolumes();
+        openingSequenceStartMs = System.currentTimeMillis();
         updateBackgroundMusic();
+        AudioManager.playSfx("intro_sound.wav");
         timer = new Timer(16, this); // ~60 FPS
         timer.start();
     }
@@ -367,8 +412,15 @@ public class GamePanel extends JPanel implements ActionListener {
         gameG.fillRect(0, 0, gameWidth, gameHeight);
         backdropEffects.drawBackdrop(gameG, screen, game.model.TimerStyle.BACKDROP_HUE, getEncounterTimerProgress());
 
+        if (screen == ScreenState.OPENING) {
+            drawOpeningSplash(gameG);
+            return;
+        }
         if (screen == ScreenState.MENU) {
             drawMenu(gameG);
+            if (startRunTransitionActive) {
+                drawStartRunTransitionOverlay(gameG);
+            }
             if (menuTransitionActive) {
                 drawMenuTransitionOverlay(gameG);
             }
@@ -376,6 +428,9 @@ public class GamePanel extends JPanel implements ActionListener {
         }
         if (screen == ScreenState.SETTINGS) {
             drawSettingsMenu(gameG);
+            if (startRunTransitionActive) {
+                drawStartRunTransitionOverlay(gameG);
+            }
             return;
         }
 
@@ -412,6 +467,9 @@ public class GamePanel extends JPanel implements ActionListener {
         }
         if (runStartFadeInActive) {
             drawRunStartFadeIn(gameG);
+        }
+        if (startRunTransitionActive) {
+            drawStartRunTransitionOverlay(gameG);
         }
         if (menuTransitionActive) {
             drawMenuTransitionOverlay(gameG);
@@ -601,9 +659,13 @@ public class GamePanel extends JPanel implements ActionListener {
         // Prevent giant movement jumps after focus loss or window stalls.
         deltaSeconds = Math.min(deltaSeconds, 0.05);
 
-        if (menuTransitionActive) {
+        if (screen == ScreenState.OPENING) {
+            updateOpeningSequence();
+        } else if (menuTransitionActive) {
+            pollControllerInput();
             updateMenuTransition();
         } else {
+            pollControllerInput();
             if (screen == ScreenState.DUNGEON
                     && !encounterTransitionActive
                     && !encounterBestedTransitionActive
@@ -657,13 +719,16 @@ public class GamePanel extends JPanel implements ActionListener {
             if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && roundManager.hasTimedOut()) {
                 handleEncounterTimeout();
             }
-            updateItemEffects();
+            updateItemEffects(deltaSeconds);
         }
         if (runStartFadeInActive) {
             long fadeElapsedMs = System.currentTimeMillis() - runStartFadeInStartMs;
             if (fadeElapsedMs >= RUN_START_FADE_IN_MS) {
                 runStartFadeInActive = false;
             }
+        }
+        if (startRunTransitionActive) {
+            updateStartRunTransition();
         }
         updateMenuHoverAnimation(deltaSeconds);
         updateSettingsRevealAnimation(deltaSeconds);
@@ -700,6 +765,47 @@ public class GamePanel extends JPanel implements ActionListener {
                 menuStartY + (menuLineStep * 2)
         );
         drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", menuLeft, menuStartY + (menuLineStep * 3));
+    }
+
+    private void drawOpeningSplash(Graphics2D g2d) {
+        g2d.setColor(Color.BLACK);
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+
+        long elapsedMs = Math.max(0L, System.currentTimeMillis() - openingSequenceStartMs);
+        if (elapsedMs >= OPENING_TEXT_SEQUENCE_MS) {
+            drawOpeningStatic(g2d);
+            return;
+        }
+        if (openingTextSprite == null) {
+            return;
+        }
+
+        float alpha = 1.0f;
+        if (elapsedMs < OPENING_FADE_IN_MS) {
+            alpha = (float) (elapsedMs / (double) OPENING_FADE_IN_MS);
+        } else if (elapsedMs > OPENING_TEXT_SEQUENCE_MS - OPENING_FADE_OUT_MS) {
+            long fadeOutElapsedMs = elapsedMs - (OPENING_TEXT_SEQUENCE_MS - OPENING_FADE_OUT_MS);
+            alpha = (float) (1.0 - (fadeOutElapsedMs / (double) OPENING_FADE_OUT_MS));
+        }
+        alpha = Math.max(0.0f, Math.min(1.0f, alpha));
+
+        double scale = 0.85;
+        int spriteW = (int) Math.round(openingTextSprite.getWidth() * scale);
+        int spriteH = (int) Math.round(openingTextSprite.getHeight() * scale);
+        int x = (GameConfig.WIDTH - spriteW) / 2;
+        int y = (GameConfig.HEIGHT - spriteH) / 2;
+
+        Composite oldComposite = g2d.getComposite();
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        g2d.drawImage(openingTextSprite, x, y, spriteW, spriteH, null);
+        g2d.setComposite(oldComposite);
+    }
+
+    private void drawOpeningStatic(Graphics2D g2d) {
+        if (openingStaticGif == null) {
+            return;
+        }
+        g2d.drawImage(openingStaticGif, 0, 0, GameConfig.WIDTH, GameConfig.HEIGHT, this);
     }
 
     private void drawSettingsMenu(Graphics2D g2d) {
@@ -890,6 +996,36 @@ public class GamePanel extends JPanel implements ActionListener {
         return Math.max(target, current - maxDelta);
     }
 
+    private void pollControllerInput() {
+        if (!controllerPrewarmFinished) {
+            return;
+        }
+        ControllerInputManager.Snapshot snapshot = controllerInputManager.poll();
+        setControllerMovementHeld(Direction.UP, snapshot.isConnected() && snapshot.isUpHeld());
+        setControllerMovementHeld(Direction.DOWN, snapshot.isConnected() && snapshot.isDownHeld());
+        setControllerMovementHeld(Direction.LEFT, snapshot.isConnected() && snapshot.isLeftHeld());
+        setControllerMovementHeld(Direction.RIGHT, snapshot.isConnected() && snapshot.isRightHeld());
+
+        if (snapshot.isUpPressed()) {
+            processDirectionalInput(Direction.UP);
+        }
+        if (snapshot.isDownPressed()) {
+            processDirectionalInput(Direction.DOWN);
+        }
+        if (snapshot.isLeftPressed()) {
+            processDirectionalInput(Direction.LEFT);
+        }
+        if (snapshot.isRightPressed()) {
+            processDirectionalInput(Direction.RIGHT);
+        }
+        if (snapshot.isConfirmPressed()) {
+            handleConfirmAction();
+        }
+        if (snapshot.isBackPressed()) {
+            handleBackAction();
+        }
+    }
+
     private void handleMenuDirection(Direction direction) {
         int previousIndex = menuSelectionIndex;
         if (direction == Direction.UP) {
@@ -915,6 +1051,67 @@ public class GamePanel extends JPanel implements ActionListener {
         }
         if (menuSelectionIndex != previousIndex) {
             AudioManager.playSfx("tab_switch.wav");
+        }
+    }
+
+    private void processDirectionalInput(Direction direction) {
+        if (screen == ScreenState.MENU && !menuTransitionActive && !startRunTransitionActive) {
+            handleMenuDirection(direction);
+            return;
+        }
+        if (screen == ScreenState.SETTINGS && !menuTransitionActive && !startRunTransitionActive) {
+            handleSettingsDirection(direction);
+            return;
+        }
+        if (screen == ScreenState.SHOP && !menuTransitionActive && !startRunTransitionActive) {
+            handleShopDirection(direction);
+            return;
+        }
+        if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive && !startRunTransitionActive) {
+            List<Integer> sequence = roundManager.getSequence();
+            int progressIndex = roundManager.getProgressIndex();
+            boolean isLastInput = !sequence.isEmpty() && progressIndex >= sequence.size() - 1;
+            if (!isLastInput) {
+                AudioManager.playClickSfx();
+            }
+            backdropEffects.spawnInputRipple(
+                    direction.ordinal(),
+                    sequence,
+                    progressIndex,
+                    ARENA_X,
+                    ENCOUNTER_ARENA_Y,
+                    ARENA_W,
+                    ARENA_H,
+                    SEQUENCE_SYMBOL_SIZE,
+                    SEQUENCE_SYMBOL_GAP
+            );
+            handleEncounterInput(direction.ordinal());
+        }
+    }
+
+    private void handleConfirmAction() {
+        if (menuTransitionActive || startRunTransitionActive) {
+            return;
+        }
+        if (screen == ScreenState.MENU) {
+            activateSelectedMenuItem();
+        } else if (screen == ScreenState.SETTINGS) {
+            activateSelectedSettingsItem();
+        } else if (screen == ScreenState.SHOP) {
+            purchaseSelectedShopItem();
+        } else if (screen == ScreenState.LOST) {
+            startRun();
+        }
+    }
+
+    private void handleBackAction() {
+        if (screen == ScreenState.SHOP) {
+            closeShop();
+        } else if (screen == ScreenState.SETTINGS) {
+            AudioManager.playSfx("back_toggle.wav");
+            screen = ScreenState.MENU;
+        } else if (screen != ScreenState.MENU && !menuTransitionActive && !startRunTransitionActive) {
+            startMenuTransition();
         }
     }
 
@@ -1384,6 +1581,10 @@ public class GamePanel extends JPanel implements ActionListener {
             }
         }
 
+        if (forcedTestItem == ItemArchetype.POISON) {
+            drawPoisonItemIndicator(g2d, enemyBarY);
+        }
+
         /*g2d.setColor(WHITE);
         String hpText = enemy.getHealth() + " / " + enemy.getMaxHealth();
         drawCenteredString(g2d, hpText, GameConfig.WIDTH / 2, enemyBarY + ENEMY_BAR_H + 18);
@@ -1406,9 +1607,6 @@ public class GamePanel extends JPanel implements ActionListener {
             int pulseAlpha = (int) Math.round(90 + (70 * pulse));
             g2d.setColor(new Color(80, 255, 140, pulseAlpha));
             g2d.fillRect(ENEMY_BAR_X + 2, enemyBarY + ENEMY_BAR_H - 6, ENEMY_BAR_W - 4, 4);
-            g2d.setFont(SMALL_FONT);
-            g2d.setColor(new Color(120, 255, 170, 200));
-            g2d.drawString("POISON", ENEMY_BAR_X + ENEMY_BAR_W - 82, enemyBarY - 10);
         }
         if (now < lastPoisonUntilMs && lastPoisonDamage > 0) {
             double popProgress = 1.0 - ((lastPoisonUntilMs - now) / 520.0);
@@ -1418,6 +1616,92 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.setColor(new Color(90, 255, 140, alpha));
             drawCenteredString(g2d, "-" + lastPoisonDamage, GameConfig.WIDTH / 2, enemyBarY - 36 - yOffset);
         }
+    }
+
+    private void drawPoisonItemIndicator(Graphics2D g2d, int enemyBarY) {
+        BufferedImage poisonSprite = getPoisonIndicatorSprite();
+        if (poisonSprite == null) {
+            return;
+        }
+
+        long animationElapsedMs = getPoisonAnimationElapsedMs();
+        double pulse = 0.0;
+        if (animationElapsedMs >= 0L) {
+            double progress = Math.min(1.0, animationElapsedMs / 220.0);
+            pulse = Math.sin(progress * Math.PI);
+        }
+
+        int baseIconSize = 68;
+        int iconSize = baseIconSize + (int) Math.round(8.0 * pulse);
+        int iconX = ENEMY_BAR_X - ((iconSize - baseIconSize) / 2);
+        int iconY = enemyBarY + ENEMY_BAR_H + 8 - ((iconSize - baseIconSize) / 2);
+
+        Composite oldComposite = g2d.getComposite();
+        if (pulse > 0.0) {
+            BufferedImage glowSprite = tintSprite(poisonSprite, new Color(120, 255, 170));
+            int glowSize = iconSize + 6;
+            int glowInset = (glowSize - iconSize) / 2;
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.06 + (0.06 * pulse))));
+            g2d.drawImage(glowSprite, iconX - glowInset, iconY - glowInset, glowSize, glowSize, null);
+        }
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.70f));
+        g2d.drawImage(poisonSprite, iconX, iconY, iconSize, iconSize, null);
+        if (pulse > 0.0) {
+            BufferedImage glowSprite = tintSprite(poisonSprite, new Color(170, 255, 210));
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.18 + (0.20 * pulse))));
+            g2d.drawImage(glowSprite, iconX, iconY, iconSize, iconSize, null);
+        }
+        g2d.setComposite(oldComposite);
+
+        int barX = iconX + ((iconSize - ITEM_CHARGE_BAR_WIDTH) / 2);
+        int barY = iconY + iconSize + 6;
+        drawItemBuildUpBar(g2d, barX, barY, getPoisonBuildUpRatio(), new Color(90, 255, 140), pulse);
+    }
+
+    private void drawItemBuildUpBar(Graphics2D g2d, int x, int y, double fillRatio, Color fillColor, double pulse) {
+        double clampedRatio = Math.max(0.0, Math.min(1.0, fillRatio));
+        g2d.setColor(new Color(7, 24, 18, 185));
+        g2d.fillRoundRect(x, y, ITEM_CHARGE_BAR_WIDTH, ITEM_CHARGE_BAR_HEIGHT, 6, 6);
+
+        int fillWidth = (int) Math.round((ITEM_CHARGE_BAR_WIDTH - 2) * clampedRatio);
+        if (fillWidth > 0) {
+            int alpha = (int) Math.round(170 + (50 * pulse));
+            g2d.setColor(new Color(fillColor.getRed(), fillColor.getGreen(), fillColor.getBlue(), alpha));
+            g2d.fillRoundRect(x + 1, y + 1, fillWidth, ITEM_CHARGE_BAR_HEIGHT - 2, 5, 5);
+        }
+
+        g2d.setColor(new Color(120, 255, 170, 130));
+        g2d.drawRoundRect(x, y, ITEM_CHARGE_BAR_WIDTH, ITEM_CHARGE_BAR_HEIGHT, 6, 6);
+    }
+
+    private double getPoisonBuildUpRatio() {
+        return poisonBuildUp / GameConfig.ITEM_BUILDUP_TARGET;
+    }
+
+    private BufferedImage getPoisonIndicatorSprite() {
+        if (poisonIconSprite == null) {
+            return null;
+        }
+        if (lastPoisonAnimationStartMs <= 0L) {
+            return poisonIconSprite;
+        }
+
+        long elapsedMs = System.currentTimeMillis() - lastPoisonAnimationStartMs;
+        if (elapsedMs < 110L) {
+            return poisonIconAttack1Sprite != null ? poisonIconAttack1Sprite : poisonIconSprite;
+        }
+        if (elapsedMs < 220L) {
+            return poisonIconAttack2Sprite != null ? poisonIconAttack2Sprite : poisonIconSprite;
+        }
+        return poisonIconSprite;
+    }
+
+    private long getPoisonAnimationElapsedMs() {
+        if (lastPoisonAnimationStartMs <= 0L) {
+            return -1L;
+        }
+        long elapsedMs = System.currentTimeMillis() - lastPoisonAnimationStartMs;
+        return elapsedMs < 220L ? elapsedMs : -1L;
     }
 
     private void drawSequence(Graphics2D g2d) {
@@ -1612,18 +1896,7 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put("confirm_action", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if (menuTransitionActive) {
-                    return;
-                }
-                if (screen == ScreenState.MENU) {
-                    activateSelectedMenuItem();
-                } else if (screen == ScreenState.SETTINGS) {
-                    activateSelectedSettingsItem();
-                } else if (screen == ScreenState.SHOP) {
-                    purchaseSelectedShopItem();
-                } else if (screen == ScreenState.LOST) {
-                    startRun();
-                }
+                handleConfirmAction();
             }
         });
 
@@ -1631,14 +1904,7 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put("go_to_menu", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if (screen == ScreenState.SHOP) {
-                    closeShop();
-                } else if (screen == ScreenState.SETTINGS) {
-                    AudioManager.playSfx("back_toggle.wav");
-                    screen = ScreenState.MENU;
-                } else if (screen != ScreenState.MENU && !menuTransitionActive) {
-                    startMenuTransition();
-                }
+                handleBackAction();
             }
         });
     }
@@ -1652,38 +1918,7 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put(actionName, new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if (screen == ScreenState.MENU && !menuTransitionActive) {
-                    handleMenuDirection(direction);
-                    return;
-                }
-                if (screen == ScreenState.SETTINGS && !menuTransitionActive) {
-                    handleSettingsDirection(direction);
-                    return;
-                }
-                if (screen == ScreenState.SHOP && !menuTransitionActive) {
-                    handleShopDirection(direction);
-                    return;
-                }
-                if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive) {
-                    List<Integer> sequence = roundManager.getSequence();
-                    int progressIndex = roundManager.getProgressIndex();
-                    boolean isLastInput = !sequence.isEmpty() && progressIndex >= sequence.size() - 1;
-                    if (!isLastInput) {
-                        AudioManager.playClickSfx();
-                    }
-                    backdropEffects.spawnInputRipple(
-                            direction.ordinal(),
-                            sequence,
-                            progressIndex,
-                            ARENA_X,
-                            ENCOUNTER_ARENA_Y,
-                            ARENA_W,
-                            ARENA_H,
-                            SEQUENCE_SYMBOL_SIZE,
-                            SEQUENCE_SYMBOL_GAP
-                    );
-                    handleEncounterInput(direction.ordinal());
-                }
+                processDirectionalInput(direction);
             }
         });
     }
@@ -1709,6 +1944,19 @@ public class GamePanel extends JPanel implements ActionListener {
         });
     }
 
+    private void ensureControllerPrewarmStarted() {
+        if (controllerPrewarmStarted) {
+            return;
+        }
+        controllerPrewarmStarted = true;
+        Thread thread = new Thread(() -> {
+            controllerInputManager.prewarm();
+            controllerPrewarmFinished = true;
+        }, "controller-prewarm");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
     private void startRun() {
         roomNumber = 1;
         coinCount = 0;
@@ -1722,6 +1970,7 @@ public class GamePanel extends JPanel implements ActionListener {
         clearMovementInput();
         clearTimerBarAnimation();
         menuTransitionActive = false;
+        startRunTransitionActive = true;
         encounterTransitionActive = false;
         pendingEncounterIndex = -1;
         encounterIntroActive = false;
@@ -1729,15 +1978,15 @@ public class GamePanel extends JPanel implements ActionListener {
         roomIntroActive = false;
         pendingRoomEntryDirection = null;
         roomIntroDirection = null;
-        runStartFadeInActive = true;
-        runStartFadeInStartMs = System.currentTimeMillis();
+        runStartFadeInActive = false;
+        runStartFadeInStartMs = 0L;
+        startRunTransitionStartMs = System.currentTimeMillis();
         enemyKillEffects.clear();
         backdropEffects.clearHueSweeps();
         roundManager.configureEncounter(EnemyArchetype.NORMAL);
         roundManager.startGame(true);
         generateRoom();
         AudioManager.playSfx("enter_game.wav");
-        screen = ScreenState.DUNGEON;
     }
 
     private void generateRoom() {
@@ -1847,16 +2096,16 @@ public class GamePanel extends JPanel implements ActionListener {
         double dx = 0.0;
         double dy = 0.0;
 
-        if (moveUpHeld) {
+        if (isMovementHeld(Direction.UP)) {
             dy -= 1.0;
         }
-        if (moveDownHeld) {
+        if (isMovementHeld(Direction.DOWN)) {
             dy += 1.0;
         }
-        if (moveLeftHeld) {
+        if (isMovementHeld(Direction.LEFT)) {
             dx -= 1.0;
         }
-        if (moveRightHeld) {
+        if (isMovementHeld(Direction.RIGHT)) {
             dx += 1.0;
         }
 
@@ -1972,10 +2221,14 @@ public class GamePanel extends JPanel implements ActionListener {
     private void handleEncounterInput(int symbol) {
         boolean wrongFlashBefore = roundManager.isWrongFlashActive();
         int progressBefore = roundManager.getProgressIndex();
+        int sequenceLengthBefore = roundManager.getSequence().size();
         RoundCompletion completion = roundManager.handleSymbolInput(symbol);
         int progressAfter = roundManager.getProgressIndex();
         if (completion != null || progressAfter > progressBefore) {
             registerSequencePunch(completion != null);
+        }
+        if (progressAfter > progressBefore) {
+            applyItemBuildUpOnCorrectKey(sequenceLengthBefore, progressBefore, roundManager.getLastCorrectCadenceMs());
         }
         if (completion == null) {
             boolean triggeredWrongInput = !wrongFlashBefore && roundManager.isWrongFlashActive();
@@ -2007,7 +2260,6 @@ public class GamePanel extends JPanel implements ActionListener {
             lastHitDamage = 0;
             lastHitUntilMs = 0;
         }
-        applyItemOnHit(currentNode, damage);
 
         boolean enemyDefeated = currentNode.isCleared();
         if (completion != null && !enemyDefeated) {
@@ -2042,22 +2294,38 @@ public class GamePanel extends JPanel implements ActionListener {
         applyPlayerDamage(2, true);
     }
 
-    private void applyItemOnHit(EncounterNode node, int damage) {
-        if (damage <= 0 || node == null || node.isCleared()) {
+    private void applyItemBuildUpOnCorrectKey(int sequenceLength, int keyIndex, long cadenceMs) {
+        if (forcedTestItem != ItemArchetype.POISON) {
             return;
         }
-        if (forcedTestItem == ItemArchetype.POISON) {
-            poisonTicksRemaining += GameConfig.POISON_TICKS_PER_HIT;
-            if (poisonTicksRemaining < 0) {
-                poisonTicksRemaining = GameConfig.POISON_TICKS_PER_HIT;
-            }
-            if (nextPoisonTickMs <= 0L) {
-                nextPoisonTickMs = System.currentTimeMillis() + GameConfig.POISON_TICK_INTERVAL_MS;
-            }
+        if (screen != ScreenState.ENCOUNTER || encounterIntroActive) {
+            return;
+        }
+
+        double increment = DamageCalculator.calculateItemBuildUpIncrement(sequenceLength, keyIndex, cadenceMs);
+        if (increment <= 0.0) {
+            return;
+        }
+
+        poisonBuildUp += increment;
+        while (poisonBuildUp >= GameConfig.ITEM_BUILDUP_TARGET) {
+            poisonBuildUp -= GameConfig.ITEM_BUILDUP_TARGET;
+            triggerPoisonProc();
         }
     }
 
-    private void updateItemEffects() {
+    private void triggerPoisonProc() {
+        poisonTicksRemaining += GameConfig.POISON_TICKS_PER_PROC;
+        if (poisonTicksRemaining < 0) {
+            poisonTicksRemaining = GameConfig.POISON_TICKS_PER_PROC;
+        }
+        lastPoisonAnimationStartMs = System.currentTimeMillis();
+        if (nextPoisonTickMs <= 0L) {
+            nextPoisonTickMs = System.currentTimeMillis() + GameConfig.POISON_TICK_INTERVAL_MS;
+        }
+    }
+
+    private void updateItemEffects(double deltaSeconds) {
         if (forcedTestItem != ItemArchetype.POISON) {
             clearActiveItemEffects();
             return;
@@ -2066,6 +2334,7 @@ public class GamePanel extends JPanel implements ActionListener {
             clearActiveItemEffects();
             return;
         }
+        updateItemBuildUpDecay(deltaSeconds);
         if (poisonTicksRemaining <= 0) {
             return;
         }
@@ -2106,11 +2375,23 @@ public class GamePanel extends JPanel implements ActionListener {
         }
     }
 
+    private void updateItemBuildUpDecay(double deltaSeconds) {
+        if (poisonBuildUp <= 0.0 || deltaSeconds <= 0.0) {
+            return;
+        }
+        poisonBuildUp = Math.max(
+                0.0,
+                poisonBuildUp - (GameConfig.ITEM_BUILDUP_DECAY_PER_SECOND * deltaSeconds)
+        );
+    }
+
     private void clearActiveItemEffects() {
+        poisonBuildUp = 0.0;
         poisonTicksRemaining = 0;
         nextPoisonTickMs = 0L;
         lastPoisonDamage = 0;
         lastPoisonUntilMs = 0L;
+        lastPoisonAnimationStartMs = 0L;
     }
 
     private void applyPlayerDamage(int amountUnits, boolean resetTimerOnSurvive) {
@@ -2142,7 +2423,7 @@ public class GamePanel extends JPanel implements ActionListener {
             return;
         }
         spawnEnemyDefeatEffect(node);
-        AudioManager.playSfx("enemy_defeated.wav");
+        AudioManager.playSfx("enemy_defeated.wav", 7.0f);
         activeEncounterIndex = -1;
         clearMovementInput();
         clearTimerBarAnimation();
@@ -2335,14 +2616,43 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void setMovementHeld(Direction direction, boolean held) {
+        setKeyboardMovementHeld(direction, held);
+    }
+
+    private boolean isMovementHeld(Direction direction) {
         if (direction == Direction.UP) {
-            moveUpHeld = held;
+            return keyboardMoveUpHeld || controllerMoveUpHeld;
+        }
+        if (direction == Direction.DOWN) {
+            return keyboardMoveDownHeld || controllerMoveDownHeld;
+        }
+        if (direction == Direction.LEFT) {
+            return keyboardMoveLeftHeld || controllerMoveLeftHeld;
+        }
+        return keyboardMoveRightHeld || controllerMoveRightHeld;
+    }
+
+    private void setKeyboardMovementHeld(Direction direction, boolean held) {
+        if (direction == Direction.UP) {
+            keyboardMoveUpHeld = held;
         } else if (direction == Direction.DOWN) {
-            moveDownHeld = held;
+            keyboardMoveDownHeld = held;
         } else if (direction == Direction.LEFT) {
-            moveLeftHeld = held;
+            keyboardMoveLeftHeld = held;
         } else {
-            moveRightHeld = held;
+            keyboardMoveRightHeld = held;
+        }
+    }
+
+    private void setControllerMovementHeld(Direction direction, boolean held) {
+        if (direction == Direction.UP) {
+            controllerMoveUpHeld = held;
+        } else if (direction == Direction.DOWN) {
+            controllerMoveDownHeld = held;
+        } else if (direction == Direction.LEFT) {
+            controllerMoveLeftHeld = held;
+        } else {
+            controllerMoveRightHeld = held;
         }
     }
 
@@ -2359,10 +2669,14 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void clearMovementInput() {
-        moveUpHeld = false;
-        moveDownHeld = false;
-        moveLeftHeld = false;
-        moveRightHeld = false;
+        keyboardMoveUpHeld = false;
+        keyboardMoveDownHeld = false;
+        keyboardMoveLeftHeld = false;
+        keyboardMoveRightHeld = false;
+        controllerMoveUpHeld = false;
+        controllerMoveDownHeld = false;
+        controllerMoveLeftHeld = false;
+        controllerMoveRightHeld = false;
         lastTickNanos = System.nanoTime();
     }
 
@@ -2575,6 +2889,12 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void loadMenuSprites() {
         startMenuSprite = loadImage("START.png");
+        openingTextSprite = loadImage("opening_text.png");
+        openingStaticGif = loadAnimatedImage("startup_static.gif");
+        openingStaticSequenceMs = loadGifDurationMillis("startup_static.gif");
+        poisonIconSprite = loadImage("poison_icon.png");
+        poisonIconAttack1Sprite = loadImage("poison_icon_attack1.png");
+        poisonIconAttack2Sprite = loadImage("poison_icon_attack2.png");
     }
 
     private void drawHeartHud(Graphics2D g2d) {
@@ -2641,13 +2961,135 @@ public class GamePanel extends JPanel implements ActionListener {
         return loadFromFiles(fileName);
     }
 
+    private Image loadAnimatedImage(String fileName) {
+        URL classpathUrl = getClass().getClassLoader().getResource("assets/" + fileName);
+        if (classpathUrl != null) {
+            return new ImageIcon(classpathUrl).getImage();
+        }
+
+        File[] candidates = {
+                new File("src/assets/" + fileName),
+                new File("assets/" + fileName)
+        };
+        for (File file : candidates) {
+            if (file.isFile()) {
+                return new ImageIcon(file.getAbsolutePath()).getImage();
+            }
+        }
+        return null;
+    }
+
+    private long loadGifDurationMillis(String fileName) {
+        URL classpathUrl = getClass().getClassLoader().getResource("assets/" + fileName);
+        if (classpathUrl != null) {
+            try (ImageInputStream stream = ImageIO.createImageInputStream(classpathUrl.openStream())) {
+                long durationMs = readGifDurationMillis(stream);
+                if (durationMs > 0L) {
+                    return durationMs;
+                }
+            } catch (IOException ignored) {
+                // Fall back to a fixed duration if GIF metadata is unavailable.
+            }
+        }
+
+        File[] candidates = {
+                new File("src/assets/" + fileName),
+                new File("assets/" + fileName)
+        };
+        for (File file : candidates) {
+            if (!file.isFile()) {
+                continue;
+            }
+            try (ImageInputStream stream = ImageIO.createImageInputStream(file)) {
+                long durationMs = readGifDurationMillis(stream);
+                if (durationMs > 0L) {
+                    return durationMs;
+                }
+            } catch (IOException ignored) {
+                return OPENING_STATIC_SEQUENCE_FALLBACK_MS;
+            }
+        }
+
+        return OPENING_STATIC_SEQUENCE_FALLBACK_MS;
+    }
+
+    private long readGifDurationMillis(ImageInputStream stream) throws IOException {
+        if (stream == null) {
+            return 0L;
+        }
+
+        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("gif");
+        if (!readers.hasNext()) {
+            return 0L;
+        }
+
+        ImageReader reader = readers.next();
+        try {
+            reader.setInput(stream, false, false);
+            int frameCount = reader.getNumImages(true);
+            long durationMs = 0L;
+            for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                IIOMetadata metadata = reader.getImageMetadata(frameIndex);
+                Node root = metadata.getAsTree(metadata.getNativeMetadataFormatName());
+                durationMs += extractGifFrameDelayMillis(root);
+            }
+            return durationMs;
+        } finally {
+            reader.dispose();
+        }
+    }
+
+    private long extractGifFrameDelayMillis(Node metadataRoot) {
+        if (metadataRoot == null) {
+            return 0L;
+        }
+
+        Node graphicsControlExtension = findMetadataNode(metadataRoot, "GraphicControlExtension");
+        if (graphicsControlExtension == null) {
+            return 0L;
+        }
+
+        NamedNodeMap attributes = graphicsControlExtension.getAttributes();
+        if (attributes == null) {
+            return 0L;
+        }
+
+        Node delayNode = attributes.getNamedItem("delayTime");
+        if (delayNode == null) {
+            return 0L;
+        }
+
+        try {
+            return Long.parseLong(delayNode.getNodeValue()) * 10L;
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
+    }
+
+    private Node findMetadataNode(Node node, String targetName) {
+        if (node == null) {
+            return null;
+        }
+        if (targetName.equals(node.getNodeName())) {
+            return node;
+        }
+
+        for (Node child = node.getFirstChild(); child != null; child = child.getNextSibling()) {
+            Node match = findMetadataNode(child, targetName);
+            if (match != null) {
+                return match;
+            }
+        }
+        return null;
+    }
+
     private BufferedImage loadFromClasspath(String fileName) {
         URL url = getClass().getClassLoader().getResource("assets/" + fileName);
         if (url == null) {
             return null;
         }
         try {
-            return ImageIO.read(url);
+            return toArgbImage(ImageIO.read(url));
         } catch (IOException ignored) {
             return null;
         }
@@ -2664,12 +3106,27 @@ public class GamePanel extends JPanel implements ActionListener {
                 continue;
             }
             try {
-                return ImageIO.read(file);
+                return toArgbImage(ImageIO.read(file));
             } catch (IOException ignored) {
                 return null;
             }
         }
         return null;
+    }
+
+    private BufferedImage toArgbImage(BufferedImage image) {
+        if (image == null) {
+            return null;
+        }
+        if (image.getType() == BufferedImage.TYPE_INT_ARGB) {
+            return image;
+        }
+
+        BufferedImage converted = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g2d = converted.createGraphics();
+        g2d.drawImage(image, 0, 0, null);
+        g2d.dispose();
+        return converted;
     }
 
     private BufferedImage tintSprite(BufferedImage sprite, Color tint) {
@@ -3145,9 +3602,27 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
     }
 
+    private void drawStartRunTransitionOverlay(Graphics2D g2d) {
+        double progress = getStartRunTransitionProgress();
+        double switchPoint = START_RUN_TRANSITION_SWITCH_MS / (double) START_RUN_TRANSITION_MS;
+        double alphaProgress;
+        if (progress <= switchPoint) {
+            alphaProgress = easeInOut(progress / switchPoint);
+        } else {
+            alphaProgress = 1.0 - easeInOut((progress - switchPoint) / (1.0 - switchPoint));
+        }
+        int alpha = clampInt((int) Math.round(255 * Math.max(0.0, alphaProgress)), 0, 255);
+        if (alpha <= 0) {
+            return;
+        }
+        g2d.setColor(new Color(0, 0, 0, alpha));
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+    }
+
     private void startMenuTransition() {
         clearMovementInput();
         backdropEffects.clearHueSweeps();
+        startRunTransitionActive = false;
         encounterTransitionActive = false;
         pendingEncounterIndex = -1;
         encounterIntroActive = false;
@@ -3169,15 +3644,91 @@ public class GamePanel extends JPanel implements ActionListener {
         }
     }
 
+    private void updateStartRunTransition() {
+        long elapsedMs = System.currentTimeMillis() - startRunTransitionStartMs;
+        if (elapsedMs >= START_RUN_TRANSITION_SWITCH_MS && screen != ScreenState.DUNGEON) {
+            screen = ScreenState.DUNGEON;
+        }
+        if (elapsedMs >= START_RUN_TRANSITION_MS) {
+            startRunTransitionActive = false;
+        }
+    }
+
+    private void updateOpeningSequence() {
+        long elapsedMs = System.currentTimeMillis() - openingSequenceStartMs;
+        if (elapsedMs >= OPENING_TEXT_SEQUENCE_MS) {
+            ensureControllerPrewarmStarted();
+        }
+        if (!openingStaticSoundPlayed && elapsedMs >= OPENING_TEXT_SEQUENCE_MS) {
+            openingStaticSoundPlayed = true;
+            openingStaticSoundClip = AudioManager.playManagedSfx("startup_static.wav", -3.0f);
+        }
+
+        long openingStaticEndMs = OPENING_TEXT_SEQUENCE_MS + openingStaticSequenceMs;
+        long fadeDurationMs = OPENING_STATIC_SOUND_FADE_LEAD_MS + OPENING_STATIC_SOUND_FADE_TAIL_MS;
+        long fadeStartMs = Math.max(OPENING_TEXT_SEQUENCE_MS, openingStaticEndMs - OPENING_STATIC_SOUND_FADE_LEAD_MS);
+        if (!openingStaticSoundFadeStarted && elapsedMs >= fadeStartMs) {
+            openingStaticSoundFadeStarted = true;
+        }
+        if (openingStaticSoundFadeStarted && openingStaticSoundClip != null) {
+            long fadeElapsedMs = Math.max(0L, elapsedMs - fadeStartMs);
+            float fadeProgress = Math.max(0.0f, Math.min(1.0f, fadeElapsedMs / (float) fadeDurationMs));
+            float gainDb = -3.0f + ((-77.0f) * fadeProgress);
+            AudioManager.setManagedSfxGain(openingStaticSoundClip, gainDb);
+        }
+        if (elapsedMs < openingStaticEndMs) {
+            return;
+        }
+        screen = ScreenState.MENU;
+        runStartFadeInActive = true;
+        runStartFadeInStartMs = System.currentTimeMillis();
+    }
+
+    private double getStartRunTransitionProgress() {
+        if (!startRunTransitionActive) {
+            return 1.0;
+        }
+        double progress = (System.currentTimeMillis() - startRunTransitionStartMs) / (double) START_RUN_TRANSITION_MS;
+        return Math.max(0.0, Math.min(1.0, progress));
+    }
+
     private void updateBackgroundMusic() {
+        if (screen == ScreenState.OPENING) {
+            AudioManager.stopBackgroundLoop();
+            AudioManager.stopLayeredLoops();
+            activeMusicFile = null;
+            return;
+        }
+
+        double shopMix = easeInOut(shopMusicFade);
+        double encounterMix = easeInOut(encounterMusicMix) * (1.0 - shopMix);
+        double baseMix = Math.max(0.0, 1.0 - shopMix - encounterMix);
+        boolean allowStartRunMusic = !startRunTransitionActive
+                || (System.currentTimeMillis() - startRunTransitionStartMs) >= START_RUN_MUSIC_DELAY_MS;
+
         boolean inMenu = screen == ScreenState.MENU || screen == ScreenState.SETTINGS;
         if (inMenu) {
             if (!MENU_MUSIC_FILE.equals(activeMusicFile)) {
                 AudioManager.ensureBackgroundLoop(MENU_MUSIC_FILE);
                 activeMusicFile = MENU_MUSIC_FILE;
             }
-            AudioManager.setBackgroundFade(1.0f);
-            AudioManager.stopLayeredLoops();
+            float menuFade = 1.0f;
+            if (startRunTransitionActive) {
+                double switchPoint = START_RUN_TRANSITION_SWITCH_MS / (double) START_RUN_TRANSITION_MS;
+                double progress = Math.min(1.0, getStartRunTransitionProgress() / switchPoint);
+                menuFade = (float) (1.0 - easeInOut(progress));
+            }
+            AudioManager.setBackgroundFade(menuFade);
+            if (startRunTransitionActive && allowStartRunMusic) {
+                AudioManager.setLayeredMix(
+                        (float) baseMix,
+                        (float) encounterMix,
+                        (float) shopMix
+                );
+                AudioManager.ensureLayeredLoops(DUNGEON_MUSIC_FILE, encounterMusicFile, SHOP_MUSIC_FILE);
+            } else {
+                AudioManager.stopLayeredLoops();
+            }
             return;
         }
 
@@ -3186,11 +3737,16 @@ public class GamePanel extends JPanel implements ActionListener {
             activeMusicFile = null;
         }
 
-        AudioManager.ensureLayeredLoops(DUNGEON_MUSIC_FILE, encounterMusicFile, SHOP_MUSIC_FILE);
-        double shopMix = easeInOut(shopMusicFade);
-        double encounterMix = easeInOut(encounterMusicMix) * (1.0 - shopMix);
-        double baseMix = Math.max(0.0, 1.0 - shopMix - encounterMix);
-        AudioManager.setLayeredMix((float) baseMix, (float) encounterMix, (float) shopMix);
+        if (allowStartRunMusic) {
+            AudioManager.setLayeredMix(
+                    (float) baseMix,
+                    (float) encounterMix,
+                    (float) shopMix
+            );
+            AudioManager.ensureLayeredLoops(DUNGEON_MUSIC_FILE, encounterMusicFile, SHOP_MUSIC_FILE);
+        } else {
+            AudioManager.stopLayeredLoops();
+        }
     }
 
     private void drawCenteredString(Graphics2D g2d, String text, int centerX, int baselineY) {
