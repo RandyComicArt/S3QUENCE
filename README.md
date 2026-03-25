@@ -51,7 +51,7 @@ out/                     Compiled classes
 
 ### IntelliJ IDEA
 
-Open the project, use `src` as the source root, and run [`src/game/Main.java`](/Users/randym/Desktop/Other/Java Games/S3QUENCE/src/game/Main.java).
+Open the project, use `src` as the source root, and run [`src/game/Main.java`]
 
 ### Terminal
 
