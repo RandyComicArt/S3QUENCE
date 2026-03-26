@@ -43,6 +43,7 @@ import java.awt.KeyboardFocusManager;
 import java.awt.Rectangle;
 import java.awt.RadialGradientPaint;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.Stroke;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -145,13 +146,23 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int SETTINGS_AUDIO_ITEM_COUNT = 5;
     private static final int SHOP_ITEM_COUNT = 3;
     private static final int MAX_HEARTS = 3;
-    private static final int MAX_HEALTH_UNITS = MAX_HEARTS * 2;
     private static final int HEART_GAP = 22;
     private static final int HEART_BG_MARGIN_X = 20;
     private static final int HEART_BG_Y = 24;
     private static final float HEART_BG_ALPHA = 0.28f;
+    private static final float HEART_DAMAGE_FLASH_ALPHA = 0.7f;
+    private static final float HEART_DAMAGE_PENDING_ALPHA = 0.5f;
+    private static final long HEART_DAMAGE_FLASH_MS = 130L;
+    private static final double HEART_DAMAGE_SLIDE_PER_SECOND = 2.2;
+    private static final long TIMEOUT_RESET_RECOVERY_BUFFER_MS = 140L;
+    private static final long TIMEOUT_TIMER_REFILL_DURATION_MS = 650L;
     private static final int ITEM_CHARGE_BAR_WIDTH = 76;
-    private static final int ITEM_CHARGE_BAR_HEIGHT = 7;
+    private static final int ITEM_CHARGE_BAR_HEIGHT = 4;
+    private static final int ITEM_INDICATOR_SIZE = 68;
+    private static final int ITEM_INDICATOR_GAP = 20;
+    private static final int INITIAL_SURGE_FRAME_DURATION_MS = 90;
+    private static final double INITIAL_SURGE_ACTIVE_THRESHOLD = 0.50;
+    private static final double INITIAL_SURGE_DAMAGE_MULTIPLIER = 1.20;
     private static final int SEQUENCE_SYMBOL_SIZE = 76;
     private static final int SEQUENCE_SYMBOL_GAP = 24;
     private static final long SEQUENCE_PUNCH_IDLE_RESET_MS = 240L;
@@ -217,7 +228,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage sequencePunch2Sprite;
     private BufferedImage sequencePunch3Sprite;
     private BufferedImage fullHeartSprite;
-    private BufferedImage halfHeartSprite;
+    private BufferedImage damageFlashHeartSprite;
+    private BufferedImage damagedHeartSprite;
     private BufferedImage emptyHeartSprite;
     private BufferedImage megamanTransitionSprite;
     private BufferedImage startMenuSprite;
@@ -227,6 +239,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage poisonIconSprite;
     private BufferedImage poisonIconAttack1Sprite;
     private BufferedImage poisonIconAttack2Sprite;
+    private final BufferedImage[] initialSurgeSprites = new BufferedImage[5];
     private BufferedImage sceneBuffer;
     private BufferedImage crtWarpBuffer;
     private BufferedImage crtOverlayBuffer;
@@ -271,6 +284,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private long lastTickNanos = System.nanoTime();
     private int lastHitDamage;
     private long lastHitUntilMs;
+    private int initialSurgePendingBaseDamage;
     private int displayedEnemyHealth = -1;
     private EncounterEnemy displayedEnemyRef;
     private int lastPoisonDamage;
@@ -297,7 +311,13 @@ public class GamePanel extends JPanel implements ActionListener {
     private String encounterMusicFile = ENCOUNTER_MUSIC_FILES[0];
     private long displayedTimerMs = -1L;
     private long displayedTimerDurationMs = 1L;
-    private int playerHealthUnits = MAX_HEALTH_UNITS;
+    private double playerHealth = GameConfig.PLAYER_MAX_HEALTH;
+    private double displayedPlayerHealth = GameConfig.PLAYER_MAX_HEALTH;
+    private long heartDamageFlashUntilMs;
+    private long healthDrainReliefMs;
+    private boolean timeoutRecoveryActive;
+    private long timeoutRecoveryStartMs;
+    private long timeoutRecoveryTargetMs;
     private int menuSelectionIndex = MENU_ITEM_START;
     private double menuStartHoverProgress;
     private double settingsRevealProgress;
@@ -309,7 +329,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private long mistakeGuardCharges;
     private long nextEncounterTimeBonusMs;
     private EnemyArchetype forcedTestEnemy;
-    private ItemArchetype forcedTestItem;
+    private int forcedTestItemMask;
     private Direction doorDirection = Direction.RIGHT;
     private int sceneBufferWidth = RENDER_QUALITY_WIDTHS[DEFAULT_RENDER_QUALITY_INDEX];
     private int sceneBufferHeight = RENDER_QUALITY_HEIGHTS[DEFAULT_RENDER_QUALITY_INDEX];
@@ -716,10 +736,15 @@ public class GamePanel extends JPanel implements ActionListener {
                     roomIntroDirection = null;
                 }
             }
+            if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !timeoutRecoveryActive) {
+                updateEncounterHealthDrain(deltaSeconds);
+            }
             if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && roundManager.hasTimedOut()) {
                 handleEncounterTimeout();
             }
-            updateItemEffects(deltaSeconds);
+            if (!timeoutRecoveryActive) {
+                updateItemEffects(deltaSeconds);
+            }
         }
         if (runStartFadeInActive) {
             long fadeElapsedMs = System.currentTimeMillis() - runStartFadeInStartMs;
@@ -735,6 +760,7 @@ public class GamePanel extends JPanel implements ActionListener {
         updateEncounterMusicMix(deltaSeconds);
         updateShopMusicFade(deltaSeconds);
         updateTimerBarAnimation(deltaSeconds);
+        updatePlayerHealthAnimation(deltaSeconds);
         updateEnemyHealthAnimation(deltaSeconds);
         updateBackgroundMusic();
         backdropEffects.update();
@@ -1068,6 +1094,9 @@ public class GamePanel extends JPanel implements ActionListener {
             return;
         }
         if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive && !startRunTransitionActive) {
+            if (timeoutRecoveryActive) {
+                return;
+            }
             List<Integer> sequence = roundManager.getSequence();
             int progressIndex = roundManager.getProgressIndex();
             boolean isLastInput = !sequence.isEmpty() && progressIndex >= sequence.size() - 1;
@@ -1201,8 +1230,8 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         boolean purchased = false;
-        if (option == ShopOption.HEAL && playerHealthUnits < MAX_HEALTH_UNITS) {
-            playerHealthUnits = Math.min(MAX_HEALTH_UNITS, playerHealthUnits + 2);
+        if (option == ShopOption.HEAL && playerHealth < GameConfig.PLAYER_MAX_HEALTH) {
+            playerHealth = Math.min(GameConfig.PLAYER_MAX_HEALTH, playerHealth + GameConfig.SHOP_HEAL_AMOUNT);
             purchased = true;
         } else if (option == ShopOption.SHIELD) {
             mistakeGuardCharges++;
@@ -1240,19 +1269,47 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void cycleTestItem(int delta) {
         ItemArchetype[] items = ItemArchetype.values();
-        int currentIndex = forcedTestItem == null ? -1 : forcedTestItem.ordinal();
-        int nextIndex = currentIndex + delta;
-        if (nextIndex < -1) {
-            nextIndex = items.length - 1;
-        } else if (nextIndex >= items.length) {
-            nextIndex = -1;
+        int combinationCount = 1 << items.length;
+        int nextMask = forcedTestItemMask + delta;
+        if (nextMask < 0) {
+            nextMask = combinationCount - 1;
+        } else if (nextMask >= combinationCount) {
+            nextMask = 0;
         }
-        forcedTestItem = nextIndex == -1 ? null : items[nextIndex];
+        forcedTestItemMask = nextMask;
         clearActiveItemEffects();
     }
 
     private String getTestItemMenuLabel() {
-        return forcedTestItem == null ? "OFF" : forcedTestItem.getLabel();
+        if (forcedTestItemMask == 0) {
+            return "OFF";
+        }
+
+        StringBuilder label = new StringBuilder();
+        for (ItemArchetype item : ItemArchetype.values()) {
+            if (!hasTestItem(item)) {
+                continue;
+            }
+            if (label.length() > 0) {
+                label.append(" + ");
+            }
+            label.append(item.getLabel());
+        }
+        return label.toString();
+    }
+
+    private boolean hasTestItem(ItemArchetype item) {
+        return item != null && (forcedTestItemMask & (1 << item.ordinal())) != 0;
+    }
+
+    private List<ItemArchetype> getEnabledTestItems() {
+        List<ItemArchetype> enabled = new ArrayList<>();
+        for (ItemArchetype item : ItemArchetype.values()) {
+            if (hasTestItem(item)) {
+                enabled.add(item);
+            }
+        }
+        return enabled;
     }
 
     private String getRenderQualityLabel() {
@@ -1562,28 +1619,46 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.fillRect(ENEMY_BAR_X + 2, enemyBarY + 2, fillWidth, ENEMY_BAR_H - 3);
         }
 
-        int pendingDamage = Math.max(0, roundManager.getPendingDamage());
         int baseHealth = Math.max(0, displayedHealth);
-        int previewDamage = Math.min(baseHealth, pendingDamage);
+        int pendingDamage = Math.max(0, roundManager.getPendingDamage());
+        int surgeEligibleDamage = Math.min(pendingDamage, Math.max(0, initialSurgePendingBaseDamage));
+        int surgeBonusDamage = Math.max(0, applyInitialSurgeBonus(surgeEligibleDamage) - surgeEligibleDamage);
+        int previewBaseDamage = Math.min(baseHealth, pendingDamage);
+        int previewSurgeDamage = Math.min(Math.max(0, baseHealth - previewBaseDamage), surgeBonusDamage);
+        int previewDamage = previewBaseDamage + previewSurgeDamage;
         if (previewDamage > 0 && fillWidth > 0) {
-            int previewHealth = Math.max(0, baseHealth - previewDamage);
-            int previewWidth = (int) Math.round((ENEMY_BAR_W - 4) * (previewHealth / (double) enemy.getMaxHealth()));
-            previewWidth = Math.max(0, Math.min(fillWidth, previewWidth));
-            int previewSegmentWidth = fillWidth - previewWidth;
-            if (previewSegmentWidth > 0) {
+            int totalPreviewHealth = Math.max(0, baseHealth - previewDamage);
+            int totalPreviewWidth = (int) Math.round((ENEMY_BAR_W - 4) * (totalPreviewHealth / (double) enemy.getMaxHealth()));
+            totalPreviewWidth = Math.max(0, Math.min(fillWidth, totalPreviewWidth));
+
+            int baseOnlyPreviewHealth = Math.max(0, baseHealth - previewBaseDamage);
+            int baseOnlyPreviewWidth = (int) Math.round((ENEMY_BAR_W - 4) * (baseOnlyPreviewHealth / (double) enemy.getMaxHealth()));
+            baseOnlyPreviewWidth = Math.max(totalPreviewWidth, Math.min(fillWidth, baseOnlyPreviewWidth));
+
+            int surgeSegmentWidth = baseOnlyPreviewWidth - totalPreviewWidth;
+            if (surgeSegmentWidth > 0) {
+                g2d.setColor(new Color(255, 232, 112, 190));
+                g2d.fillRect(
+                        ENEMY_BAR_X + 2 + totalPreviewWidth,
+                        enemyBarY + 2,
+                        surgeSegmentWidth,
+                        ENEMY_BAR_H - 3
+                );
+            }
+
+            int basePreviewSegmentWidth = fillWidth - baseOnlyPreviewWidth;
+            if (basePreviewSegmentWidth > 0) {
                 g2d.setColor(new Color(251, 142, 255, 152));
                 g2d.fillRect(
-                        ENEMY_BAR_X + 2 + previewWidth,
+                        ENEMY_BAR_X + 2 + baseOnlyPreviewWidth,
                         enemyBarY + 2,
-                        previewSegmentWidth,
+                        basePreviewSegmentWidth,
                         ENEMY_BAR_H - 3
                 );
             }
         }
 
-        if (forcedTestItem == ItemArchetype.POISON) {
-            drawPoisonItemIndicator(g2d, enemyBarY);
-        }
+        drawActiveItemIndicators(g2d, enemyBarY);
 
         /*g2d.setColor(WHITE);
         String hpText = enemy.getHealth() + " / " + enemy.getMaxHealth();
@@ -1618,7 +1693,29 @@ public class GamePanel extends JPanel implements ActionListener {
         }
     }
 
-    private void drawPoisonItemIndicator(Graphics2D g2d, int enemyBarY) {
+    private void drawActiveItemIndicators(Graphics2D g2d, int enemyBarY) {
+        List<ItemArchetype> activeItems = getEnabledTestItems();
+        if (activeItems.isEmpty()) {
+            return;
+        }
+
+        int totalWidth = (activeItems.size() * ITEM_INDICATOR_SIZE)
+                + ((activeItems.size() - 1) * ITEM_INDICATOR_GAP);
+        int startX = ENEMY_BAR_X + ((ENEMY_BAR_W - totalWidth) / 2);
+        int baseY = enemyBarY + ENEMY_BAR_H + 8;
+
+        for (int i = 0; i < activeItems.size(); i++) {
+            int baseX = startX + (i * (ITEM_INDICATOR_SIZE + ITEM_INDICATOR_GAP));
+            ItemArchetype item = activeItems.get(i);
+            if (item == ItemArchetype.POISON) {
+                drawPoisonItemIndicator(g2d, baseX, baseY);
+            } else if (item == ItemArchetype.INITIAL_SURGE) {
+                drawInitialSurgeIndicator(g2d, baseX, baseY);
+            }
+        }
+    }
+
+    private void drawPoisonItemIndicator(Graphics2D g2d, int baseX, int baseY) {
         BufferedImage poisonSprite = getPoisonIndicatorSprite();
         if (poisonSprite == null) {
             return;
@@ -1631,10 +1728,9 @@ public class GamePanel extends JPanel implements ActionListener {
             pulse = Math.sin(progress * Math.PI);
         }
 
-        int baseIconSize = 68;
-        int iconSize = baseIconSize + (int) Math.round(8.0 * pulse);
-        int iconX = ENEMY_BAR_X - ((iconSize - baseIconSize) / 2);
-        int iconY = enemyBarY + ENEMY_BAR_H + 8 - ((iconSize - baseIconSize) / 2);
+        int iconSize = ITEM_INDICATOR_SIZE + (int) Math.round(8.0 * pulse);
+        int iconX = baseX - ((iconSize - ITEM_INDICATOR_SIZE) / 2);
+        int iconY = baseY - ((iconSize - ITEM_INDICATOR_SIZE) / 2);
 
         Composite oldComposite = g2d.getComposite();
         if (pulse > 0.0) {
@@ -1655,27 +1751,88 @@ public class GamePanel extends JPanel implements ActionListener {
 
         int barX = iconX + ((iconSize - ITEM_CHARGE_BAR_WIDTH) / 2);
         int barY = iconY + iconSize + 6;
-        drawItemBuildUpBar(g2d, barX, barY, getPoisonBuildUpRatio(), new Color(90, 255, 140), pulse);
+        drawItemBuildUpMeter(g2d, barX, barY, getPoisonBuildUpRatio(), new Color(90, 255, 140), pulse);
     }
 
-    private void drawItemBuildUpBar(Graphics2D g2d, int x, int y, double fillRatio, Color fillColor, double pulse) {
-        double clampedRatio = Math.max(0.0, Math.min(1.0, fillRatio));
-        g2d.setColor(new Color(7, 24, 18, 185));
-        g2d.fillRoundRect(x, y, ITEM_CHARGE_BAR_WIDTH, ITEM_CHARGE_BAR_HEIGHT, 6, 6);
-
-        int fillWidth = (int) Math.round((ITEM_CHARGE_BAR_WIDTH - 2) * clampedRatio);
-        if (fillWidth > 0) {
-            int alpha = (int) Math.round(170 + (50 * pulse));
-            g2d.setColor(new Color(fillColor.getRed(), fillColor.getGreen(), fillColor.getBlue(), alpha));
-            g2d.fillRoundRect(x + 1, y + 1, fillWidth, ITEM_CHARGE_BAR_HEIGHT - 2, 5, 5);
+    private void drawInitialSurgeIndicator(Graphics2D g2d, int baseX, int baseY) {
+        boolean active = isInitialSurgeActive();
+        BufferedImage sprite = getInitialSurgeIndicatorSprite(active);
+        if (sprite == null) {
+            return;
         }
 
-        g2d.setColor(new Color(120, 255, 170, 130));
-        g2d.drawRoundRect(x, y, ITEM_CHARGE_BAR_WIDTH, ITEM_CHARGE_BAR_HEIGHT, 6, 6);
+        double pulse = active ? 0.5 + (0.5 * Math.sin(System.currentTimeMillis() / 110.0)) : 0.0;
+        int iconSize = ITEM_INDICATOR_SIZE + (active ? (int) Math.round(6.0 * pulse) : 0);
+        int iconX = baseX - ((iconSize - ITEM_INDICATOR_SIZE) / 2);
+        int iconY = baseY - ((iconSize - ITEM_INDICATOR_SIZE) / 2);
+
+        Composite oldComposite = g2d.getComposite();
+        if (active) {
+            BufferedImage glowSprite = tintSprite(sprite, new Color(255, 248, 190));
+            int glowSize = iconSize + 6;
+            int glowInset = (glowSize - iconSize) / 2;
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.08 + (0.10 * pulse))));
+            g2d.drawImage(glowSprite, iconX - glowInset, iconY - glowInset, glowSize, glowSize, null);
+        }
+        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, active ? 0.82f : 0.70f));
+        g2d.drawImage(sprite, iconX, iconY, iconSize, iconSize, null);
+        g2d.setComposite(oldComposite);
+
+        int barX = iconX + ((iconSize - ITEM_CHARGE_BAR_WIDTH) / 2);
+        int barY = iconY + iconSize + 6;
+        drawItemBuildUpMeter(
+                g2d,
+                barX,
+                barY,
+                active ? 1.0 : 0.0,
+                new Color(255, 244, 136),
+                pulse
+        );
+    }
+
+    private void drawItemBuildUpMeter(Graphics2D g2d, int x, int y, double fillRatio, Color fillColor, double pulse) {
+        double clampedRatio = Math.max(0.0, Math.min(1.0, fillRatio));
+        int lineY = y + (ITEM_CHARGE_BAR_HEIGHT / 2);
+        int fillHeight = ITEM_CHARGE_BAR_HEIGHT + 3;
+        int fillY = y - 1;
+
+        g2d.setColor(new Color(255, 255, 255, 210));
+        g2d.drawLine(x, lineY, x + ITEM_CHARGE_BAR_WIDTH - 1, lineY);
+
+        int fillWidth = (int) Math.round(ITEM_CHARGE_BAR_WIDTH * clampedRatio);
+        if (fillWidth > 0) {
+            int alpha = (int) Math.round(190 + (45 * pulse));
+            g2d.setColor(new Color(fillColor.getRed(), fillColor.getGreen(), fillColor.getBlue(), alpha));
+            g2d.fillRect(x, fillY, fillWidth, fillHeight);
+        } else {
+            g2d.setColor(new Color(255, 255, 255, 70));
+            g2d.fillRect(x, y + 1, 1, Math.max(1, ITEM_CHARGE_BAR_HEIGHT - 2));
+        }
     }
 
     private double getPoisonBuildUpRatio() {
         return poisonBuildUp / GameConfig.ITEM_BUILDUP_TARGET;
+    }
+
+    private BufferedImage getInitialSurgeIndicatorSprite(boolean active) {
+        BufferedImage fallback = null;
+        for (BufferedImage sprite : initialSurgeSprites) {
+            if (sprite != null) {
+                fallback = sprite;
+                break;
+            }
+        }
+        if (fallback == null) {
+            return null;
+        }
+        if (!active) {
+            return fallback;
+        }
+
+        int frameCount = initialSurgeSprites.length;
+        int frameIndex = (int) ((System.currentTimeMillis() / INITIAL_SURGE_FRAME_DURATION_MS) % frameCount);
+        BufferedImage frame = initialSurgeSprites[frameIndex];
+        return frame != null ? frame : fallback;
     }
 
     private BufferedImage getPoisonIndicatorSprite() {
@@ -1704,6 +1861,27 @@ public class GamePanel extends JPanel implements ActionListener {
         return elapsedMs < 220L ? elapsedMs : -1L;
     }
 
+    private boolean isInitialSurgeActive() {
+        return isInitialSurgeActive(roundManager.getTimeLeftMs(), roundManager.getRoundDurationMs());
+    }
+
+    private boolean isInitialSurgeActive(long timeLeftMs, long durationMs) {
+        if (!hasTestItem(ItemArchetype.INITIAL_SURGE)) {
+            return false;
+        }
+        if (screen != ScreenState.ENCOUNTER || durationMs <= 0L) {
+            return false;
+        }
+        return (timeLeftMs / (double) durationMs) >= INITIAL_SURGE_ACTIVE_THRESHOLD;
+    }
+
+    private int applyInitialSurgeBonus(int damage) {
+        if (damage <= 0) {
+            return 0;
+        }
+        return Math.max(0, (int) Math.round(damage * INITIAL_SURGE_DAMAGE_MULTIPLIER));
+    }
+
     private void drawSequence(Graphics2D g2d) {
         List<Integer> sequence = roundManager.getSequence();
         int count = sequence.size();
@@ -1715,6 +1893,10 @@ public class GamePanel extends JPanel implements ActionListener {
         int startX = ARENA_X + (ARENA_W - totalWidth) / 2;
         int y = ENCOUNTER_ARENA_Y + (ARENA_H - SEQUENCE_SYMBOL_SIZE) / 2 + 52;
         drawSequencePunchSprite(g2d, y);
+        Composite oldComposite = g2d.getComposite();
+        if (timeoutRecoveryActive) {
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.46f));
+        }
         boolean wrongFlash = roundManager.isWrongFlashActive();
         int progressIndex = roundManager.getProgressIndex();
         boolean hideSequence = roundManager.shouldHideSequence();
@@ -1750,6 +1932,7 @@ public class GamePanel extends JPanel implements ActionListener {
                 }
             }
         }
+        g2d.setComposite(oldComposite);
     }
 
     private void drawSequencePunchSprite(Graphics2D g2d, int arrowRowY) {
@@ -1960,7 +2143,13 @@ public class GamePanel extends JPanel implements ActionListener {
     private void startRun() {
         roomNumber = 1;
         coinCount = 0;
-        playerHealthUnits = MAX_HEALTH_UNITS;
+        playerHealth = GameConfig.PLAYER_MAX_HEALTH;
+        displayedPlayerHealth = playerHealth;
+        heartDamageFlashUntilMs = 0L;
+        healthDrainReliefMs = 0L;
+        timeoutRecoveryActive = false;
+        timeoutRecoveryStartMs = 0L;
+        timeoutRecoveryTargetMs = 0L;
         mistakeGuardCharges = 0L;
         nextEncounterTimeBonusMs = 0L;
         shopSelectionIndex = 0;
@@ -2154,6 +2343,10 @@ public class GamePanel extends JPanel implements ActionListener {
         clearMovementInput();
         lastHitDamage = 0;
         lastHitUntilMs = 0;
+        timeoutRecoveryActive = false;
+        timeoutRecoveryStartMs = 0L;
+        timeoutRecoveryTargetMs = 0L;
+        healthDrainReliefMs = 0L;
         clearActiveItemEffects();
         resetSequencePunchState();
         backdropEffects.clearHueSweeps();
@@ -2222,22 +2415,28 @@ public class GamePanel extends JPanel implements ActionListener {
         boolean wrongFlashBefore = roundManager.isWrongFlashActive();
         int progressBefore = roundManager.getProgressIndex();
         int sequenceLengthBefore = roundManager.getSequence().size();
+        int pendingDamageBefore = roundManager.getPendingDamage();
         RoundCompletion completion = roundManager.handleSymbolInput(symbol);
         int progressAfter = roundManager.getProgressIndex();
         if (completion != null || progressAfter > progressBefore) {
             registerSequencePunch(completion != null);
         }
         if (progressAfter > progressBefore) {
+            int pendingDamageAfter = roundManager.getPendingDamage();
+            registerInitialSurgeDamage(Math.max(0, pendingDamageAfter - pendingDamageBefore));
+            addHealthDrainRelief();
+            restoreHealthOnCorrectKey();
             applyItemBuildUpOnCorrectKey(sequenceLengthBefore, progressBefore, roundManager.getLastCorrectCadenceMs());
         }
         if (completion == null) {
             boolean triggeredWrongInput = !wrongFlashBefore && roundManager.isWrongFlashActive();
             if (triggeredWrongInput) {
+                clearInitialSurgeState();
                 resetSequencePunchState();
                 if (mistakeGuardCharges > 0) {
                     mistakeGuardCharges--;
                 } else {
-                    applyPlayerDamage(1, false);
+                    applyPlayerDamage(GameConfig.WRONG_INPUT_HEALTH_LOSS, false, "heart_lost.wav");
                 }
             }
             return;
@@ -2249,8 +2448,12 @@ public class GamePanel extends JPanel implements ActionListener {
         backdropEffects.triggerHueSweepRipple(completion, roundManager.getTimeLeftMs(), game.model.TimerStyle.BACKDROP_HUE);
 
         EncounterNode currentNode = roomEncounters.get(activeEncounterIndex);
+        int resolvedDamage = Math.max(0, completion.getResolvedDamage());
+        int surgeEligibleDamage = Math.min(resolvedDamage, Math.max(0, initialSurgePendingBaseDamage));
+        resolvedDamage += Math.max(0, applyInitialSurgeBonus(surgeEligibleDamage) - surgeEligibleDamage);
+        clearInitialSurgeState();
         int damage = (int) Math.round(
-                Math.max(0, completion.getResolvedDamage()) * currentNode.getEnemy().getArchetype().getDamageMultiplier()
+                resolvedDamage * currentNode.getEnemy().getArchetype().getDamageMultiplier()
         );
         currentNode.getEnemy().applyDamage(damage);
         if (damage > 0) {
@@ -2291,11 +2494,46 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void handleEncounterTimeout() {
-        applyPlayerDamage(2, true);
+        applyPlayerDamage(GameConfig.TIMEOUT_HEALTH_LOSS, true, "timeout.wav");
+    }
+
+    private void updateEncounterHealthDrain(double deltaSeconds) {
+        if (deltaSeconds <= 0.0 || screen != ScreenState.ENCOUNTER || encounterIntroActive || playerHealth <= 0.0) {
+            return;
+        }
+
+        double reliefSeconds = Math.min(deltaSeconds, healthDrainReliefMs / 1000.0);
+        double normalSeconds = Math.max(0.0, deltaSeconds - reliefSeconds);
+        if (reliefSeconds > 0.0) {
+            healthDrainReliefMs = Math.max(0L, healthDrainReliefMs - Math.round(reliefSeconds * 1000.0));
+        }
+
+        double drain = (normalSeconds * GameConfig.ENCOUNTER_HEALTH_DRAIN_PER_SECOND)
+                + (reliefSeconds * GameConfig.ENCOUNTER_HEALTH_DRAIN_PER_SECOND * GameConfig.HEALTH_DRAIN_RELIEF_MULTIPLIER);
+        if (drain > 0.0) {
+            applyPassiveHealthDrain(drain);
+        }
+    }
+
+    private void addHealthDrainRelief() {
+        healthDrainReliefMs = Math.min(
+                GameConfig.HEALTH_DRAIN_RELIEF_MAX_MS,
+                healthDrainReliefMs + GameConfig.HEALTH_DRAIN_RELIEF_PER_CORRECT_KEY_MS
+        );
+    }
+
+    private void restoreHealthOnCorrectKey() {
+        if (screen != ScreenState.ENCOUNTER || encounterIntroActive) {
+            return;
+        }
+        playerHealth = Math.min(
+                GameConfig.PLAYER_MAX_HEALTH,
+                playerHealth + GameConfig.HEALTH_RESTORE_PER_CORRECT_KEY
+        );
     }
 
     private void applyItemBuildUpOnCorrectKey(int sequenceLength, int keyIndex, long cadenceMs) {
-        if (forcedTestItem != ItemArchetype.POISON) {
+        if (!hasTestItem(ItemArchetype.POISON)) {
             return;
         }
         if (screen != ScreenState.ENCOUNTER || encounterIntroActive) {
@@ -2326,7 +2564,9 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void updateItemEffects(double deltaSeconds) {
-        if (forcedTestItem != ItemArchetype.POISON) {
+        boolean poisonActive = hasTestItem(ItemArchetype.POISON);
+        boolean anyItemActive = forcedTestItemMask != 0;
+        if (!anyItemActive) {
             clearActiveItemEffects();
             return;
         }
@@ -2334,6 +2574,11 @@ public class GamePanel extends JPanel implements ActionListener {
             clearActiveItemEffects();
             return;
         }
+        if (!poisonActive) {
+            clearPoisonState();
+            return;
+        }
+
         updateItemBuildUpDecay(deltaSeconds);
         if (poisonTicksRemaining <= 0) {
             return;
@@ -2386,6 +2631,25 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void clearActiveItemEffects() {
+        clearInitialSurgeState();
+        clearPoisonState();
+    }
+
+    private void registerInitialSurgeDamage(int baseDamage) {
+        if (baseDamage <= 0) {
+            return;
+        }
+        if (!isInitialSurgeActive()) {
+            return;
+        }
+        initialSurgePendingBaseDamage += baseDamage;
+    }
+
+    private void clearInitialSurgeState() {
+        initialSurgePendingBaseDamage = 0;
+    }
+
+    private void clearPoisonState() {
         poisonBuildUp = 0.0;
         poisonTicksRemaining = 0;
         nextPoisonTickMs = 0L;
@@ -2394,28 +2658,65 @@ public class GamePanel extends JPanel implements ActionListener {
         lastPoisonAnimationStartMs = 0L;
     }
 
-    private void applyPlayerDamage(int amountUnits, boolean resetTimerOnSurvive) {
-        if (screen != ScreenState.ENCOUNTER) {
-            return;
-        }
-        if (amountUnits <= 0) {
+    private void applyPassiveHealthDrain(double amount) {
+        if (amount <= 0.0 || screen != ScreenState.ENCOUNTER) {
             return;
         }
 
-        playerHealthUnits = Math.max(0, playerHealthUnits - amountUnits);
-        AudioManager.playSfx("heart_lost.wav");
-        if (playerHealthUnits <= 0) {
+        playerHealth = Math.max(0.0, playerHealth - amount);
+        if (playerHealth <= 0.0) {
             clearMovementInput();
             clearTimerBarAnimation();
             AudioManager.playSfx("player_death.wav");
+            screen = ScreenState.LOST;
+        }
+    }
+
+    private void applyPlayerDamage(double amountUnits, boolean resetTimerOnSurvive, String nonLethalSfx) {
+        if (screen != ScreenState.ENCOUNTER) {
+            return;
+        }
+        if (amountUnits <= 0.0) {
+            return;
+        }
+
+        beginHealthDamageAnimation();
+        double nextHealth = Math.max(0.0, playerHealth - amountUnits);
+        boolean lethal = nextHealth <= 0.0;
+        playerHealth = nextHealth;
+        clearInitialSurgeState();
+        healthDrainReliefMs = 0L;
+        if (lethal) {
+            AudioManager.playSfx("player_death.wav");
+        } else {
+            AudioManager.playSfx(nonLethalSfx);
+        }
+        if (playerHealth <= 0.0) {
+            clearMovementInput();
+            clearTimerBarAnimation();
             screen = ScreenState.LOST;
             return;
         }
 
         if (resetTimerOnSurvive) {
             roundManager.startGame(false);
-            resetTimerBarAnimation();
+            startTimeoutRecoveryAnimation();
         }
+    }
+
+    private void beginHealthDamageAnimation() {
+        displayedPlayerHealth = Math.max(displayedPlayerHealth, playerHealth);
+        heartDamageFlashUntilMs = System.currentTimeMillis() + HEART_DAMAGE_FLASH_MS;
+    }
+
+    private void startTimeoutRecoveryAnimation() {
+        long targetTimeLeft = Math.max(0L, roundManager.getTimeLeftMs());
+        displayedTimerDurationMs = Math.max(1L, roundManager.getRoundDurationMs());
+        displayedTimerMs = 0L;
+        timeoutRecoveryActive = true;
+        timeoutRecoveryStartMs = System.currentTimeMillis();
+        timeoutRecoveryTargetMs = targetTimeLeft;
+        roundManager.pauseTimer(TIMEOUT_TIMER_REFILL_DURATION_MS + TIMEOUT_RESET_RECOVERY_BUFFER_MS);
     }
 
     private void finalizeEncounterIfEnemyDefeated(EncounterNode node) {
@@ -2425,6 +2726,8 @@ public class GamePanel extends JPanel implements ActionListener {
         spawnEnemyDefeatEffect(node);
         AudioManager.playSfx("enemy_defeated.wav", 7.0f);
         activeEncounterIndex = -1;
+        clearInitialSurgeState();
+        timeoutRecoveryActive = false;
         clearMovementInput();
         clearTimerBarAnimation();
         screen = ScreenState.DUNGEON;
@@ -2690,6 +2993,20 @@ public class GamePanel extends JPanel implements ActionListener {
         long duration = Math.max(1L, roundManager.getRoundDurationMs());
         displayedTimerDurationMs = duration;
 
+        if (timeoutRecoveryActive) {
+            long elapsedMs = Math.max(0L, System.currentTimeMillis() - timeoutRecoveryStartMs);
+            double progress = Math.max(0.0, Math.min(1.0, elapsedMs / (double) TIMEOUT_TIMER_REFILL_DURATION_MS));
+            displayedTimerMs = Math.round(timeoutRecoveryTargetMs * progress);
+            if (progress >= 1.0) {
+                timeoutRecoveryActive = false;
+                timeoutRecoveryStartMs = 0L;
+                timeoutRecoveryTargetMs = 0L;
+                displayedTimerMs = targetTimeLeft;
+            }
+            displayedTimerMs = Math.max(0L, Math.min(duration, displayedTimerMs));
+            return;
+        }
+
         if (!roundManager.getActiveArchetype().isTimeRecoveryEnabled()) {
             displayedTimerMs = Math.max(0L, Math.min(duration, targetTimeLeft));
             return;
@@ -2708,6 +3025,28 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         displayedTimerMs = Math.max(0L, Math.min(duration, displayedTimerMs));
+    }
+
+    private void updatePlayerHealthAnimation(double deltaSeconds) {
+        if (screen == ScreenState.LOST) {
+            displayedPlayerHealth = Math.max(0.0, Math.min(GameConfig.PLAYER_MAX_HEALTH, displayedPlayerHealth));
+            return;
+        }
+        if (displayedPlayerHealth < playerHealth) {
+            displayedPlayerHealth = playerHealth;
+        }
+        if (displayedPlayerHealth <= playerHealth) {
+            displayedPlayerHealth = playerHealth;
+            return;
+        }
+        if (System.currentTimeMillis() < heartDamageFlashUntilMs) {
+            return;
+        }
+
+        displayedPlayerHealth = Math.max(
+                playerHealth,
+                displayedPlayerHealth - (HEART_DAMAGE_SLIDE_PER_SECOND * Math.max(0.0, deltaSeconds))
+        );
     }
 
     private void updateEnemyHealthAnimation(double deltaSeconds) {
@@ -2743,11 +3082,17 @@ public class GamePanel extends JPanel implements ActionListener {
         long timeLeft = roundManager.getTimeLeftMs();
         displayedTimerMs = timeLeft;
         displayedTimerDurationMs = Math.max(1L, roundManager.getRoundDurationMs());
+        timeoutRecoveryActive = false;
+        timeoutRecoveryStartMs = 0L;
+        timeoutRecoveryTargetMs = 0L;
     }
 
     private void clearTimerBarAnimation() {
         displayedTimerMs = -1L;
         displayedTimerDurationMs = 1L;
+        timeoutRecoveryActive = false;
+        timeoutRecoveryStartMs = 0L;
+        timeoutRecoveryTargetMs = 0L;
     }
 
     private void drawEncounterTimerBorder(Graphics2D g2d, int x, int y, int width, int height) {
@@ -2758,6 +3103,10 @@ public class GamePanel extends JPanel implements ActionListener {
 
         double danger = 1.0 - progress;
         Color activeColor = lerpColor(TIMER_HIGH, TIMER_LOW, danger);
+        if (timeoutRecoveryActive) {
+            double pulse = 0.5 + (0.5 * Math.sin(System.currentTimeMillis() / 90.0));
+            activeColor = lerpColor(new Color(110, 214, 255), WHITE, pulse * 0.45);
+        }
         if (progress < 0.28) {
             double pulse = 0.5 + (0.5 * Math.sin(System.currentTimeMillis() / 80.0));
             activeColor = lerpColor(activeColor, WHITE, pulse * 0.45);
@@ -2879,7 +3228,8 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void loadHeartSprites() {
         fullHeartSprite = loadImage("full_heart.png");
-        halfHeartSprite = loadImage("half_heart.png");
+        damageFlashHeartSprite = fullHeartSprite != null ? tintSprite(fullHeartSprite, new Color(255, 176, 236)) : null;
+        damagedHeartSprite = fullHeartSprite != null ? tintSprite(fullHeartSprite, new Color(255, 156, 228)) : null;
         emptyHeartSprite = loadImage("empty_heart.png");
     }
 
@@ -2895,6 +3245,9 @@ public class GamePanel extends JPanel implements ActionListener {
         poisonIconSprite = loadImage("poison_icon.png");
         poisonIconAttack1Sprite = loadImage("poison_icon_attack1.png");
         poisonIconAttack2Sprite = loadImage("poison_icon_attack2.png");
+        for (int i = 0; i < initialSurgeSprites.length; i++) {
+            initialSurgeSprites[i] = loadImage("initial_surge" + (i + 1) + ".png");
+        }
     }
 
     private void drawHeartHud(Graphics2D g2d) {
@@ -2902,25 +3255,59 @@ public class GamePanel extends JPanel implements ActionListener {
         int heartSize = Math.max(24, availableWidth / MAX_HEARTS);
         int startX = HEART_BG_MARGIN_X + Math.max(0, (availableWidth - (heartSize * MAX_HEARTS)) / 2);
         int y = HEART_BG_Y;
+        long now = System.currentTimeMillis();
+        boolean damageFlashActive = now < heartDamageFlashUntilMs;
         Composite oldComposite = g2d.getComposite();
-        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, HEART_BG_ALPHA));
 
         for (int i = 0; i < MAX_HEARTS; i++) {
-            int unitsInSlot = playerHealthUnits - (i * 2);
-            BufferedImage sprite;
-            if (unitsInSlot >= 2) {
-                sprite = fullHeartSprite;
-            } else if (unitsInSlot == 1) {
-                sprite = halfHeartSprite;
+            int x = startX + (i * (heartSize + HEART_GAP));
+            double heartFill = Math.max(0.0, Math.min(1.0, playerHealth - i));
+            double displayedFill = Math.max(0.0, Math.min(1.0, displayedPlayerHealth - i));
+
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, HEART_BG_ALPHA));
+            if (emptyHeartSprite != null) {
+                g2d.drawImage(emptyHeartSprite, x, y, heartSize, heartSize, null);
             } else {
-                sprite = emptyHeartSprite;
+                drawFallbackHeartBackground(g2d, x, y, heartSize);
             }
 
-            int x = startX + (i * (heartSize + HEART_GAP));
-            if (sprite != null) {
-                g2d.drawImage(sprite, x, y, heartSize, heartSize, null);
-            } else {
-                drawFallbackHeart(g2d, x, y, unitsInSlot, heartSize);
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, HEART_BG_ALPHA));
+            if (heartFill > 0.0) {
+                if (fullHeartSprite != null) {
+                    Shape oldClip = g2d.getClip();
+                    int fillWidth = Math.max(1, Math.min(heartSize, (int) Math.round(heartSize * heartFill)));
+                    g2d.clipRect(x, y, fillWidth, heartSize);
+                    g2d.drawImage(fullHeartSprite, x, y, heartSize, heartSize, null);
+                    g2d.setClip(oldClip);
+                } else {
+                    drawFallbackHeartFill(g2d, x, y, heartFill, heartSize);
+                }
+            }
+
+            double damageFill = Math.max(0.0, displayedFill - heartFill);
+            if (damageFill > 0.0) {
+                int fillStart = x + (int) Math.round(heartSize * heartFill);
+                int fillWidth = Math.max(1, (int) Math.round(heartSize * damageFill));
+                BufferedImage damageSprite = damageFlashActive && damageFlashHeartSprite != null
+                        ? damageFlashHeartSprite
+                        : damagedHeartSprite;
+                if (damageSprite != null) {
+                    Shape oldClip = g2d.getClip();
+                    Composite damageComposite = g2d.getComposite();
+                    g2d.setComposite(AlphaComposite.getInstance(
+                            AlphaComposite.SRC_OVER,
+                            damageFlashActive ? HEART_DAMAGE_FLASH_ALPHA : HEART_DAMAGE_PENDING_ALPHA
+                    ));
+                    g2d.clipRect(fillStart, y, fillWidth, heartSize);
+                    g2d.drawImage(damageSprite, x, y, heartSize, heartSize, null);
+                    g2d.setClip(oldClip);
+                    g2d.setComposite(damageComposite);
+                } else {
+                    g2d.setColor(damageFlashActive
+                            ? new Color(255, 176, 236, 215)
+                            : new Color(255, 156, 228, 175));
+                    g2d.fillRect(fillStart, y + 2, fillWidth, Math.max(1, heartSize - 4));
+                }
             }
         }
         g2d.setComposite(oldComposite);
@@ -2933,7 +3320,6 @@ public class GamePanel extends JPanel implements ActionListener {
             g2d.drawString("NEXT +" + nextEncounterTimeBonusMs + "MS", 28, 126);
         }
 
-        long now = System.currentTimeMillis();
         if (now < lastCoinGainUntilMs && lastCoinGain != 0) {
             double popProgress = 1.0 - ((lastCoinGainUntilMs - now) / 760.0);
             int yOffset = (int) Math.round(10 * popProgress);
@@ -2945,10 +3331,17 @@ public class GamePanel extends JPanel implements ActionListener {
         }
     }
 
-    private void drawFallbackHeart(Graphics2D g2d, int x, int y, int unitsInSlot, int heartSize) {
-        Color fillColor = unitsInSlot >= 2 ? RED : (unitsInSlot == 1 ? new Color(255, 138, 188) : new Color(26, 28, 42));
-        g2d.setColor(fillColor);
+    private void drawFallbackHeartBackground(Graphics2D g2d, int x, int y, int heartSize) {
+        g2d.setColor(new Color(90, 96, 112));
         g2d.fillRect(x + 2, y + 2, heartSize - 4, heartSize - 4);
+        g2d.setColor(WHITE);
+        g2d.drawRect(x, y, heartSize, heartSize);
+    }
+
+    private void drawFallbackHeartFill(Graphics2D g2d, int x, int y, double fillRatio, int heartSize) {
+        int fillWidth = Math.max(1, Math.min(heartSize - 4, (int) Math.round((heartSize - 4) * fillRatio)));
+        g2d.setColor(RED);
+        g2d.fillRect(x + 2, y + 2, fillWidth, heartSize - 4);
         g2d.setColor(WHITE);
         g2d.drawRect(x, y, heartSize, heartSize);
     }

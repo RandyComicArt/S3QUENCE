@@ -27,6 +27,7 @@ public class RoundManager {
     private long sequenceCompleteHoldUntilMs;
     private long heldTimeLeftMs;
     private long pendingTimeRestoreMs;
+    private long timerPauseUntilMs;
     private EnemyArchetype activeArchetype = EnemyArchetype.NORMAL;
     private int minSequenceLength = GameConfig.MIN_SEQUENCE_LENGTH;
     private int maxSequenceLength = GameConfig.MAX_SEQUENCE_LENGTH;
@@ -56,6 +57,7 @@ public class RoundManager {
         timerMaxMs = Math.max(1L, configuredStart);
         timerRemainingMs = timerMaxMs;
         lastTimerUpdateMs = System.currentTimeMillis();
+        timerPauseUntilMs = 0L;
         startNewSequence();
     }
 
@@ -189,6 +191,12 @@ public class RoundManager {
         return Math.max(0L, lastCorrectCadenceMs);
     }
 
+    public void pauseTimer(long durationMs) {
+        long now = System.currentTimeMillis();
+        timerPauseUntilMs = Math.max(timerPauseUntilMs, now + Math.max(0L, durationMs));
+        lastTimerUpdateMs = now;
+    }
+
     private void startNewSequence() {
         sequence.clear();
         int sequenceLength = random.nextInt(maxSequenceLength - minSequenceLength + 1) + minSequenceLength;
@@ -226,7 +234,7 @@ public class RoundManager {
         }
         long elapsedMs = Math.max(0L, now - lastTimerUpdateMs);
         lastTimerUpdateMs = now;
-        if (elapsedMs <= 0L || sequenceCompleteHoldActive || now < wrongFlashUntilMs) {
+        if (elapsedMs <= 0L || sequenceCompleteHoldActive || now < wrongFlashUntilMs || now < timerPauseUntilMs) {
             return;
         }
         timerRemainingMs = Math.max(0L, timerRemainingMs - elapsedMs);

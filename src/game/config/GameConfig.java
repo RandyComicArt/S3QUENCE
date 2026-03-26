@@ -18,6 +18,15 @@ public final class GameConfig {
     public static final long TIME_RESTORE_MIN_MS = 110L;
     public static final long WRONG_FLASH_MS = 300L;
     public static final long SEQUENCE_COMPLETE_HOLD_MS = 220L;
+    public static final double PLAYER_MAX_HEALTH = 3.0;
+    public static final double SHOP_HEAL_AMOUNT = 1.0;
+    public static final double WRONG_INPUT_HEALTH_LOSS = 0.25;
+    public static final double TIMEOUT_HEALTH_LOSS = 0.5;
+    public static final double ENCOUNTER_HEALTH_DRAIN_PER_SECOND = 0.08;
+    public static final double HEALTH_RESTORE_PER_CORRECT_KEY = 0.015;
+    public static final long HEALTH_DRAIN_RELIEF_PER_CORRECT_KEY_MS = 120L;
+    public static final double HEALTH_DRAIN_RELIEF_MULTIPLIER = 0.12;
+    public static final long HEALTH_DRAIN_RELIEF_MAX_MS = 1200L;
 
     public static final int BOX_SIZE = 64;
     public static final int BOX_GAP = 12;

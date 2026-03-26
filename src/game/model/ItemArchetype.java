@@ -1,7 +1,8 @@
 package game.model;
 
 public enum ItemArchetype {
-    POISON("POISON");
+    POISON("POISON"),
+    INITIAL_SURGE("INITIAL SURGE");
 
     private final String label;
 
