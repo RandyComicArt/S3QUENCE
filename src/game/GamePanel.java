@@ -55,6 +55,10 @@ import java.util.concurrent.locks.LockSupport;
 public class GamePanel extends JPanel {
     private static final long TARGET_FRAME_NANOS = 1_000_000_000L / 120L;
     private static final long MAX_FRAME_DELTA_NANOS = 50_000_000L;
+    private static final Stroke STROKE_1 = new BasicStroke(1f);
+    private static final Stroke STROKE_5 = new BasicStroke(5f);
+    private static final Color HUD_LINE_WHITE = new Color(255, 255, 255, 210);
+    private static final Color HUD_LINE_WHITE_DIM = new Color(255, 255, 255, 70);
 
     private final Object stateLock = new Object();
     private final RoundManager roundManager = new RoundManager();
@@ -1530,7 +1534,7 @@ public class GamePanel extends JPanel {
         int fillHeight = ITEM_CHARGE_BAR_HEIGHT + 3;
         int fillY = y - 1;
 
-        g2d.setColor(new Color(255, 255, 255, 210));
+        g2d.setColor(HUD_LINE_WHITE);
         g2d.drawLine(x, lineY, x + ITEM_CHARGE_BAR_WIDTH - 1, lineY);
 
         int fillWidth = (int) Math.round(ITEM_CHARGE_BAR_WIDTH * clampedRatio);
@@ -1539,7 +1543,7 @@ public class GamePanel extends JPanel {
             g2d.setColor(new Color(fillColor.getRed(), fillColor.getGreen(), fillColor.getBlue(), alpha));
             g2d.fillRect(x, fillY, fillWidth, fillHeight);
         } else {
-            g2d.setColor(new Color(255, 255, 255, 70));
+            g2d.setColor(HUD_LINE_WHITE_DIM);
             g2d.fillRect(x, y + 1, 1, Math.max(1, ITEM_CHARGE_BAR_HEIGHT - 2));
         }
     }
@@ -2881,7 +2885,7 @@ public class GamePanel extends JPanel {
         int bh = height + (borderInset * 2);
 
         Stroke old = g2d.getStroke();
-        g2d.setStroke(new BasicStroke(5f));
+        g2d.setStroke(STROKE_5);
         g2d.setColor(new Color(30, 68, 116, 160));
         g2d.drawRect(bx, by, bw, bh);
 
@@ -2937,7 +2941,7 @@ public class GamePanel extends JPanel {
         int head = boxSize / 6;
 
         Stroke oldStroke = g2d.getStroke();
-        g2d.setStroke(new BasicStroke(5f));
+        g2d.setStroke(STROKE_5);
         g2d.setColor(color);
 
         if (direction == Direction.UP) {
@@ -3122,8 +3126,8 @@ public class GamePanel extends JPanel {
         g2d.setColor(color);
         g2d.drawRect(x, y, w, h);
         if (w > 4 && h > 4) {
-            g2d.setStroke(new BasicStroke(1f));
-            g2d.setColor(new Color(255, 255, 255, 70));
+            g2d.setStroke(STROKE_1);
+            g2d.setColor(HUD_LINE_WHITE_DIM);
             g2d.drawRect(x + 1, y + 1, w - 2, h - 2);
         }
         g2d.setStroke(old);
