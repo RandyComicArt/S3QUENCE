@@ -1,5 +1,8 @@
 package game;
 
+import static game.config.GamePanelConstants.*;
+import static game.util.UiMath.*;
+
 import game.audio.AudioManager;
 import game.config.GameConfig;
 import game.input.ControllerInputManager;
@@ -13,17 +16,14 @@ import game.model.EncounterNode;
 import game.model.ItemArchetype;
 import game.model.ScreenState;
 import game.model.ShopOption;
+import game.util.GameImageLoader;
 import game.visual.BackdropEffects;
+import game.visual.CrtDisplay;
 import game.visual.EnemyKillEffects;
 
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.ImageInputStream;
-import javax.imageio.metadata.IIOMetadata;
 import javax.sound.sampled.Clip;
 import javax.swing.AbstractAction;
 import javax.swing.ActionMap;
-import javax.swing.ImageIcon;
 import javax.swing.InputMap;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
@@ -33,7 +33,6 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Composite;
 import java.awt.Dimension;
-import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -41,7 +40,6 @@ import java.awt.Image;
 import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
 import java.awt.Rectangle;
-import java.awt.RadialGradientPaint;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.Stroke;
@@ -49,193 +47,18 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
-import java.awt.image.RescaleOp;
-import java.awt.geom.Area;
-import java.awt.geom.RoundRectangle2D;
-import java.io.File;
-import java.io.IOException;
-import java.net.URL;
-import java.util.Iterator;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Random;
-import org.w3c.dom.NamedNodeMap;
-import org.w3c.dom.Node;
 
 @SuppressWarnings({"serial", "this-escape"})
 public class GamePanel extends JPanel implements ActionListener {
-    private static final Color BG = new Color(1, 5, 16);
-    private static final Color WHITE = new Color(194, 236, 255);
-    private static final Color TEXT_DIM = new Color(104, 156, 208);
-    private static final Color YELLOW = new Color(94, 245, 255);
-    private static final Color GREEN = new Color(74, 228, 255);
-    private static final Color RED = new Color(255, 89, 177);
-    private static final Color GLOW_CYAN = new Color(94, 245, 255);
-    private static final Color TIMER_HIGH = new Color(98, 247, 255);
-    private static final Color TIMER_LOW = new Color(74, 106, 255);
-    private static final Color ARENA_GLASS = new Color(2, 10, 24, 102);
-    private static final Color ROOM_GLASS = new Color(4, 18, 40, 90);
-    private static final String MENU_MUSIC_FILE = "main_menu.wav";
-    private static final String DUNGEON_MUSIC_FILE = "Loop_drum.wav";
-    private static final String[] ENCOUNTER_MUSIC_FILES = {"guitar_loop.wav", "guitar_loop2.wav", "guitar_loop3.wav", "guitar_loop4.wav"};
-    private static final String[] ECHO_MUSIC_FILES = {"guitar_loop4.wav", "echo_song2.wav"};
-    private static final String SHOP_MUSIC_FILE = "shop_loop.wav";
-
-    private static final Font TITLE_FONT = new Font("Monospaced", Font.BOLD, 40);
-    private static final Font HUD_FONT = new Font("Monospaced", Font.BOLD, 24);
-    private static final Font BODY_FONT = new Font("Monospaced", Font.PLAIN, 20);
-    private static final Font SMALL_FONT = new Font("Monospaced", Font.PLAIN, 16);
-    private static final Font TRANSITION_ENEMY_FONT = new Font("Monospaced", Font.BOLD, 36);
-
-    private static final int ARENA_X = 120;
-    private static final int ARENA_Y = 170;
-    private static final int ARENA_W = GameConfig.WIDTH - 240;
-    private static final int ARENA_H = 420;
-    private static final int ENCOUNTER_ARENA_Y = 170;
-    private static final int ENEMY_BAR_W = ARENA_W - 180;
-    private static final int ENEMY_BAR_X = ARENA_X + ((ARENA_W - ENEMY_BAR_W) / 2);
-    private static final int ENEMY_BAR_H = 50;
-
-    private static final int ROOM_X = ARENA_X + 35;
-    private static final int ROOM_Y = ARENA_Y + 40;
-    private static final int ROOM_W = ARENA_W - 70;
-    private static final int ROOM_H = ARENA_H - 65;
-    private static final int DOOR_W = 16;
-    private static final int DOOR_H = 88;
-    private static final int PLAYER_SIZE = 18;
-    private static final double PLAYER_SPEED_PER_SECOND = 280.0;
-    private static final int ENCOUNTER_SIZE = 18;
-    private static final long ENCOUNTER_TRANSITION_MS = 1280L;
-    private static final long ENCOUNTER_TRANSITION_HOLD_MS = 360L;
-    private static final long ENCOUNTER_INTRO_MS = 360L;
-    private static final long ROOM_TRANSITION_MS = 900L;
-    private static final long ROOM_TRANSITION_HOLD_MS = 180L;
-    private static final long ROOM_INTRO_MS = 360L;
-    private static final long RUN_START_FADE_IN_MS = 1000L;
-    private static final long MENU_TRANSITION_MS = 520L;
-    private static final long MENU_TRANSITION_SWITCH_MS = MENU_TRANSITION_MS / 2;
-    private static final long OPENING_TEXT_SEQUENCE_MS = 2200L;
-    private static final long OPENING_STATIC_SEQUENCE_FALLBACK_MS = 520L;
-    private static final long OPENING_STATIC_SOUND_FADE_LEAD_MS = 320L;
-    private static final long OPENING_STATIC_SOUND_FADE_TAIL_MS = 220L;
-    private static final long OPENING_FADE_IN_MS = 260L;
-    private static final long OPENING_FADE_OUT_MS = 520L;
-    private static final long START_RUN_TRANSITION_MS = 1250L;
-    private static final long START_RUN_TRANSITION_SWITCH_MS = 420L;
-    private static final long START_RUN_MUSIC_DELAY_MS = 320L;
-    private static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
-    private static final double TIMER_REFILL_ANIM_PER_SECOND = 3600.0;
-    private static final int MENU_ITEM_START = 0;
-    private static final int MENU_ITEM_TEST_ENEMY = 1;
-    private static final int MENU_ITEM_TEST_ITEM = 2;
-    private static final int MENU_ITEM_SETTINGS = 3;
-    private static final int MENU_ITEM_COUNT = 4;
-    private static final int SETTINGS_TAB_VIDEO = 0;
-    private static final int SETTINGS_TAB_AUDIO = 1;
-    private static final int SETTINGS_ITEM_TAB = 0;
-    private static final int SETTINGS_VIDEO_RENDER_QUALITY = 1;
-    private static final int SETTINGS_VIDEO_CRT_BRIGHTNESS = 2;
-    private static final int SETTINGS_VIDEO_ASPECT = 3;
-    private static final int SETTINGS_VIDEO_BACK = 4;
-    private static final int SETTINGS_VIDEO_ITEM_COUNT = 5;
-    private static final int SETTINGS_AUDIO_MASTER = 1;
-    private static final int SETTINGS_AUDIO_MUSIC = 2;
-    private static final int SETTINGS_AUDIO_SFX = 3;
-    private static final int SETTINGS_AUDIO_BACK = 4;
-    private static final int SETTINGS_AUDIO_ITEM_COUNT = 5;
-    private static final int SHOP_ITEM_COUNT = 3;
-    private static final int MAX_HEARTS = 3;
-    private static final int HEART_GAP = 22;
-    private static final int HEART_BG_MARGIN_X = 20;
-    private static final int HEART_BG_Y = 24;
-    private static final float HEART_BG_ALPHA = 0.28f;
-    private static final float HEART_DAMAGE_FLASH_ALPHA = 0.7f;
-    private static final float HEART_DAMAGE_PENDING_ALPHA = 0.5f;
-    private static final long HEART_DAMAGE_FLASH_MS = 130L;
-    private static final double HEART_DAMAGE_SLIDE_PER_SECOND = 2.2;
-    private static final long TIMEOUT_RESET_RECOVERY_BUFFER_MS = 140L;
-    private static final long TIMEOUT_TIMER_REFILL_DURATION_MS = 650L;
-    private static final int ITEM_CHARGE_BAR_WIDTH = 76;
-    private static final int ITEM_CHARGE_BAR_HEIGHT = 4;
-    private static final int ITEM_INDICATOR_SIZE = 68;
-    private static final int ITEM_INDICATOR_GAP = 20;
-    private static final int INITIAL_SURGE_FRAME_DURATION_MS = 90;
-    private static final double INITIAL_SURGE_ACTIVE_THRESHOLD = 0.50;
-    private static final double INITIAL_SURGE_DAMAGE_MULTIPLIER = 1.20;
-    private static final int SEQUENCE_SYMBOL_SIZE = 76;
-    private static final int SEQUENCE_SYMBOL_GAP = 24;
-    private static final long SEQUENCE_PUNCH_IDLE_RESET_MS = 240L;
-    private static final int SEQUENCE_PUNCH_SIZE = SEQUENCE_SYMBOL_SIZE + 20;
-    private static final float SEQUENCE_PUNCH_ALPHA = 0.75f;
-    private static final int SEQUENCE_PUNCH_OFFSET_Y = 220;
-    private static final float SEQUENCE_PUNCH_SCALE = 0.7f;
-    private static final int[] SEQUENCE_PUNCH_PATTERN = {1, 2, 1, 2};
-    private static final String[] FINISHER_SFX_FILES = {"finisher1.wav", "finisher2.wav", "finisher3.wav", "finisher4.wav", "finisher5.wav"};
-    private static final float FINISHER_SFX_GAIN_DB = -3.0f;
-    private static final float MENU_NAV_RUMBLE_STRENGTH = 0.14f;
-    private static final int MENU_NAV_RUMBLE_MS = 35;
-    private static final float START_CONFIRM_RUMBLE_STRENGTH = 0.32f;
-    private static final int START_CONFIRM_RUMBLE_MS = 75;
-    private static final float ROOM_ENTRY_RUMBLE_STRENGTH = 0.28f;
-    private static final int ROOM_ENTRY_RUMBLE_MS = 70;
-    private static final float ENEMY_TOUCH_RUMBLE_STRENGTH = 0.38f;
-    private static final int ENEMY_TOUCH_RUMBLE_MS = 80;
-    private static final float KEY_SUCCESS_RUMBLE_STRENGTH = 0.12f;
-    private static final int KEY_SUCCESS_RUMBLE_MS = 28;
-    private static final float KEY_FAIL_RUMBLE_STRENGTH = 0.34f;
-    private static final int KEY_FAIL_RUMBLE_MS = 95;
-    private static final float DAMAGE_RUMBLE_STRENGTH = 0.62f;
-    private static final int DAMAGE_RUMBLE_MS = 130;
-    private static final float SEQUENCE_COMPLETE_RUMBLE_STRENGTH = 0.62f;
-    private static final int SEQUENCE_COMPLETE_RUMBLE_MS = 130;
-    private static final float[] FINISHER_SFX_GAIN_OFFSETS_DB = {0.0f, 5.0f, 0.0f, 0.0f, 5.0f};
-    private static final int[] RENDER_QUALITY_WIDTHS = {480, 560, 640};
-    private static final int[] RENDER_QUALITY_HEIGHTS = {360, 420, 480};
-    private static final String[] RENDER_QUALITY_LABELS = {"PERFORMANCE", "BALANCED", "CLARITY"};
-    private static final String[] ASPECT_MODE_LABELS = {"ORIGINAL", "FILL"};
-    private static final float[] CRT_BRIGHTNESS_LEVELS = {
-            0.50f, 0.6786f, 0.8571f, 1.0357f, 1.2143f,
-            1.3929f, 1.5714f, 1.7500f, 1.9286f, 2.1071f,
-            2.2857f, 2.4643f, 2.6429f, 2.8214f, 3.00f
-    };
-    private static final float[] VOLUME_LEVELS = {
-            0.0f, 0.1f, 0.2f, 0.3f, 0.4f,
-            0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
-            1.0f
-    };
-    private static final double CRT_WARP_STRENGTH = 0.085;
-    private static final double CRT_VERTICAL_CURVE_STRENGTH = 0.04;
-    private static final int CRT_WARP_STRIP_PX = 2;
-    private static final boolean DEFAULT_CRT_COLOR_BLEED = true;
-    private static final int DEFAULT_RENDER_QUALITY_INDEX = 0;
-    private static final int DEFAULT_BRIGHTNESS_INDEX = 9;
-    private static final int DEFAULT_MASTER_VOLUME_INDEX = 10;
-    private static final int DEFAULT_MUSIC_VOLUME_INDEX = 10;
-    private static final int DEFAULT_SFX_VOLUME_INDEX = 10;
-    private static final int CRT_BLEED_OFFSET_X = 2;
-    private static final int CRT_BLEED_OFFSET_Y = 1;
-    private static final float CRT_BLEED_INTENSITY = 0.32f;
-    private static final RescaleOp CRT_BLEED_RED_OP = new RescaleOp(
-            new float[]{1f, 0f, 0f, 1f},
-            new float[]{0f, 0f, 0f, 0f},
-            null
-    );
-    private static final RescaleOp CRT_BLEED_GREEN_OP = new RescaleOp(
-            new float[]{0f, 1f, 0f, 1f},
-            new float[]{0f, 0f, 0f, 0f},
-            null
-    );
-    private static final RescaleOp CRT_BLEED_BLUE_OP = new RescaleOp(
-            new float[]{0f, 0f, 1f, 1f},
-            new float[]{0f, 0f, 0f, 0f},
-            null
-    );
-
     private final Timer timer;
     private final RoundManager roundManager = new RoundManager();
     private final BackdropEffects backdropEffects = new BackdropEffects();
     private final EnemyKillEffects enemyKillEffects = new EnemyKillEffects();
+    private final CrtDisplay crtDisplay = new CrtDisplay();
     private final ControllerInputManager controllerInputManager = new ControllerInputManager();
     private final EnumMap<Direction, BufferedImage> arrowSprites = new EnumMap<>(Direction.class);
     private final EnumMap<Direction, BufferedImage> arrowSpritesGreen = new EnumMap<>(Direction.class);
@@ -257,16 +80,6 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage poisonIconAttack2Sprite;
     private final BufferedImage[] initialSurgeSprites = new BufferedImage[5];
     private BufferedImage sceneBuffer;
-    private BufferedImage crtWarpBuffer;
-    private BufferedImage crtOverlayBuffer;
-    private BufferedImage crtMatteBuffer;
-    private BufferedImage crtBleedBuffer;
-    private BufferedImage crtBrightnessBuffer;
-    private RescaleOp crtBrightnessOp;
-    private int[] crtRowXs;
-    private int[] crtRowWidths;
-    private int[] crtColTops;
-    private int[] crtColBottoms;
 
     private final Random random = new Random();
     private final List<EncounterNode> roomEncounters = new ArrayList<>();
@@ -354,7 +167,6 @@ public class GamePanel extends JPanel implements ActionListener {
     private boolean crtScanlinesEnabled = true;
     private int crtBrightnessIndex = DEFAULT_BRIGHTNESS_INDEX;
     private float crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[DEFAULT_BRIGHTNESS_INDEX];
-    private float lastCrtBrightnessGain = -1f;
     private int aspectModeIndex = 0;
     private int masterVolumeIndex = DEFAULT_MASTER_VOLUME_INDEX;
     private int musicVolumeIndex = DEFAULT_MUSIC_VOLUME_INDEX;
@@ -431,10 +243,10 @@ public class GamePanel extends JPanel implements ActionListener {
         renderGameScene(sceneG);
         sceneG.dispose();
 
-        ensureCrtGeometry(renderWidth, renderHeight);
-        drawCurvedScreenImage(gameG, sceneBuffer, renderWidth, renderHeight);
-        applyCrtOverlay(gameG, renderWidth, renderHeight);
-        drawCurvedScreenMatte(gameG, renderWidth, renderHeight);
+        crtDisplay.ensureGeometry(renderWidth, renderHeight);
+        crtDisplay.drawCurvedScreenImage(gameG, sceneBuffer, renderWidth, renderHeight, crtBleedEnabled, crtBrightnessGain);
+        crtDisplay.applyOverlay(gameG, renderWidth, renderHeight, crtScanlinesEnabled);
+        crtDisplay.drawMatte(gameG, renderWidth, renderHeight);
 
         gameG.dispose();
         g2d.dispose();
@@ -510,180 +322,6 @@ public class GamePanel extends JPanel implements ActionListener {
         if (menuTransitionActive) {
             drawMenuTransitionOverlay(gameG);
         }
-    }
-
-    private void drawCurvedScreenImage(Graphics2D g2d, BufferedImage source, int targetWidth, int targetHeight) {
-        g2d.setColor(Color.BLACK);
-        g2d.fillRect(0, 0, targetWidth, targetHeight);
-
-        BufferedImage warpSource = source;
-        if (crtBleedEnabled) {
-            warpSource = buildCrtBleedBuffer(source);
-        }
-        if (Math.abs(crtBrightnessGain - 1.0f) > 0.001f) {
-            warpSource = applyCrtBrightness(warpSource);
-        }
-
-        if (crtWarpBuffer == null || crtWarpBuffer.getWidth() != targetWidth || crtWarpBuffer.getHeight() != targetHeight) {
-            crtWarpBuffer = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
-        }
-
-        Graphics2D warpG = crtWarpBuffer.createGraphics();
-        warpG.setComposite(AlphaComposite.Src);
-        warpG.setColor(new Color(0, 0, 0, 0));
-        warpG.fillRect(0, 0, targetWidth, targetHeight);
-
-        for (int y = 0; y < targetHeight; y += CRT_WARP_STRIP_PX) {
-            int stripHeight = Math.min(CRT_WARP_STRIP_PX, targetHeight - y);
-            int rowWidth = crtRowWidths[y];
-            int rowX = crtRowXs[y];
-
-            int srcY0 = (int) ((y / (double) targetHeight) * warpSource.getHeight());
-            int srcY1 = (int) (((y + stripHeight) / (double) targetHeight) * warpSource.getHeight());
-            if (srcY1 <= srcY0) {
-                srcY1 = Math.min(warpSource.getHeight(), srcY0 + 1);
-            }
-
-            warpG.drawImage(
-                    warpSource,
-                    rowX,
-                    y,
-                    rowX + rowWidth,
-                    y + stripHeight,
-                    0,
-                    srcY0,
-                    warpSource.getWidth(),
-                    srcY1,
-                    null
-            );
-        }
-        warpG.dispose();
-
-        for (int x = 0; x < targetWidth; x += CRT_WARP_STRIP_PX) {
-            int stripWidth = Math.min(CRT_WARP_STRIP_PX, targetWidth - x);
-            int destTop = crtColTops[x];
-            int destBottom = crtColBottoms[x];
-            if (destBottom <= destTop) {
-                continue;
-            }
-
-            g2d.drawImage(
-                    crtWarpBuffer,
-                    x,
-                    destTop,
-                    x + stripWidth,
-                    destBottom,
-                    x,
-                    0,
-                    x + stripWidth,
-                    targetHeight,
-                    null
-            );
-        }
-    }
-
-    private void drawCurvedScreenMatte(Graphics2D g2d, int targetWidth, int targetHeight) {
-        if (crtMatteBuffer == null || crtMatteBuffer.getWidth() != targetWidth || crtMatteBuffer.getHeight() != targetHeight) {
-            crtMatteBuffer = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D matteG = crtMatteBuffer.createGraphics();
-            matteG.setComposite(AlphaComposite.Src);
-            matteG.setColor(new Color(0, 0, 0, 0));
-            matteG.fillRect(0, 0, targetWidth, targetHeight);
-            matteG.setColor(Color.BLACK);
-            for (int y = 0; y < targetHeight; y++) {
-                int rowWidth = crtRowWidths[y];
-                int rowX = crtRowXs[y];
-                if (rowX > 0) {
-                    matteG.drawLine(0, y, rowX, y);
-                    matteG.drawLine(rowX + rowWidth, y, targetWidth, y);
-                }
-            }
-            for (int x = 0; x < targetWidth; x++) {
-                int verticalInset = crtColTops[x];
-                if (verticalInset > 0) {
-                    matteG.drawLine(x, 0, x, verticalInset);
-                    matteG.drawLine(x, targetHeight - verticalInset, x, targetHeight);
-                }
-            }
-            matteG.dispose();
-        }
-        g2d.drawImage(crtMatteBuffer, 0, 0, null);
-    }
-
-    private BufferedImage buildCrtBleedBuffer(BufferedImage source) {
-        int width = source.getWidth();
-        int height = source.getHeight();
-        if (crtBleedBuffer == null || crtBleedBuffer.getWidth() != width || crtBleedBuffer.getHeight() != height) {
-            crtBleedBuffer = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        }
-
-        Graphics2D bleedG = crtBleedBuffer.createGraphics();
-        bleedG.setComposite(AlphaComposite.Src);
-        bleedG.setColor(new Color(0, 0, 0, 0));
-        bleedG.fillRect(0, 0, width, height);
-        bleedG.drawImage(source, 0, 0, null);
-
-        bleedG.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, CRT_BLEED_INTENSITY));
-        bleedG.drawImage(source, CRT_BLEED_RED_OP, CRT_BLEED_OFFSET_X, 0);
-        bleedG.drawImage(source, CRT_BLEED_GREEN_OP, 0, CRT_BLEED_OFFSET_Y);
-        bleedG.drawImage(source, CRT_BLEED_BLUE_OP, -CRT_BLEED_OFFSET_X, 0);
-        bleedG.dispose();
-
-        return crtBleedBuffer;
-    }
-
-    private BufferedImage applyCrtBrightness(BufferedImage source) {
-        int width = source.getWidth();
-        int height = source.getHeight();
-        if (crtBrightnessBuffer == null || crtBrightnessBuffer.getWidth() != width || crtBrightnessBuffer.getHeight() != height) {
-            crtBrightnessBuffer = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        }
-        getCrtBrightnessOp().filter(source, crtBrightnessBuffer);
-        return crtBrightnessBuffer;
-    }
-
-    private RescaleOp getCrtBrightnessOp() {
-        if (crtBrightnessOp == null || Math.abs(lastCrtBrightnessGain - crtBrightnessGain) > 0.001f) {
-            lastCrtBrightnessGain = crtBrightnessGain;
-            crtBrightnessOp = new RescaleOp(
-                    new float[]{crtBrightnessGain, crtBrightnessGain, crtBrightnessGain, 1f},
-                    new float[]{0f, 0f, 0f, 0f},
-                    null
-            );
-        }
-        return crtBrightnessOp;
-    }
-
-    private void ensureCrtGeometry(int targetWidth, int targetHeight) {
-        boolean sizeChanged = crtRowXs == null
-                || crtRowXs.length != targetHeight
-                || crtColTops == null
-                || crtColTops.length != targetWidth;
-        if (!sizeChanged) {
-            return;
-        }
-
-        crtRowXs = new int[targetHeight];
-        crtRowWidths = new int[targetHeight];
-        for (int y = 0; y < targetHeight; y++) {
-            double normalizedY = ((y + 0.5) / targetHeight) * 2.0 - 1.0;
-            double curveFactor = 1.0 - (CRT_WARP_STRENGTH * (normalizedY * normalizedY));
-            int rowWidth = Math.max(1, (int) Math.round(targetWidth * curveFactor));
-            crtRowWidths[y] = rowWidth;
-            crtRowXs[y] = (targetWidth - rowWidth) / 2;
-        }
-
-        crtColTops = new int[targetWidth];
-        crtColBottoms = new int[targetWidth];
-        for (int x = 0; x < targetWidth; x++) {
-            double normalizedX = ((x + 0.5) / targetWidth) * 2.0 - 1.0;
-            int verticalInset = (int) Math.round(targetHeight * CRT_VERTICAL_CURVE_STRENGTH * (normalizedX * normalizedX));
-            crtColTops[x] = verticalInset;
-            crtColBottoms[x] = targetHeight - verticalInset;
-        }
-
-        crtOverlayBuffer = null;
-        crtMatteBuffer = null;
     }
 
     @Override
@@ -1763,7 +1401,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
         Composite oldComposite = g2d.getComposite();
         if (pulse > 0.0) {
-            BufferedImage glowSprite = tintSprite(poisonSprite, new Color(120, 255, 170));
+            BufferedImage glowSprite = GameImageLoader.tintSprite(poisonSprite, new Color(120, 255, 170));
             int glowSize = iconSize + 6;
             int glowInset = (glowSize - iconSize) / 2;
             g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.06 + (0.06 * pulse))));
@@ -1772,7 +1410,7 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.70f));
         g2d.drawImage(poisonSprite, iconX, iconY, iconSize, iconSize, null);
         if (pulse > 0.0) {
-            BufferedImage glowSprite = tintSprite(poisonSprite, new Color(170, 255, 210));
+            BufferedImage glowSprite = GameImageLoader.tintSprite(poisonSprite, new Color(170, 255, 210));
             g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.18 + (0.20 * pulse))));
             g2d.drawImage(glowSprite, iconX, iconY, iconSize, iconSize, null);
         }
@@ -1797,7 +1435,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
         Composite oldComposite = g2d.getComposite();
         if (active) {
-            BufferedImage glowSprite = tintSprite(sprite, new Color(255, 248, 190));
+            BufferedImage glowSprite = GameImageLoader.tintSprite(sprite, new Color(255, 248, 190));
             int glowSize = iconSize + 6;
             int glowInset = (glowSize - iconSize) / 2;
             g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.08 + (0.10 * pulse))));
@@ -2087,12 +1725,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.setFont(SMALL_FONT);
         g2d.setColor(TEXT_DIM);
         drawCenteredString(g2d, "ENTER BUY  |  ESC LEAVE", GameConfig.WIDTH / 2, y + h - 26);
-    }
-
-
-    private double easeInOut(double value) {
-        double clamped = Math.max(0.0, Math.min(1.0, value));
-        return clamped * clamped * (3.0 - (2.0 * clamped));
     }
 
     private void setupKeyBindings() {
@@ -3241,47 +2873,47 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void loadArrowSprites() {
-        arrowSprites.put(Direction.UP, loadImage("arrow_up.png"));
-        arrowSprites.put(Direction.DOWN, loadImage("arrow_down.png"));
-        arrowSprites.put(Direction.LEFT, loadImage("arrow_left.png"));
-        arrowSprites.put(Direction.RIGHT, loadImage("arrow_right.png"));
+        arrowSprites.put(Direction.UP, GameImageLoader.loadImage(getClass(), "arrow_up.png"));
+        arrowSprites.put(Direction.DOWN, GameImageLoader.loadImage(getClass(), "arrow_down.png"));
+        arrowSprites.put(Direction.LEFT, GameImageLoader.loadImage(getClass(), "arrow_left.png"));
+        arrowSprites.put(Direction.RIGHT, GameImageLoader.loadImage(getClass(), "arrow_right.png"));
 
         for (Direction direction : Direction.values()) {
             BufferedImage sprite = arrowSprites.get(direction);
             if (sprite != null) {
-                arrowSpritesGreen.put(direction, tintSprite(sprite, GREEN));
+                arrowSpritesGreen.put(direction, GameImageLoader.tintSprite(sprite, GREEN));
             }
         }
     }
 
     private void loadSequenceSprites() {
-        sequenceIdleSprite = loadImage("idle.png");
-        sequencePunch1Sprite = loadImage("punch1.png");
-        sequencePunch2Sprite = loadImage("punch2.png");
-        sequencePunch3Sprite = loadImage("punch3.png");
+        sequenceIdleSprite = GameImageLoader.loadImage(getClass(), "idle.png");
+        sequencePunch1Sprite = GameImageLoader.loadImage(getClass(), "punch1.png");
+        sequencePunch2Sprite = GameImageLoader.loadImage(getClass(), "punch2.png");
+        sequencePunch3Sprite = GameImageLoader.loadImage(getClass(), "punch3.png");
     }
 
     private void loadHeartSprites() {
-        fullHeartSprite = loadImage("full_heart.png");
-        damageFlashHeartSprite = fullHeartSprite != null ? tintSprite(fullHeartSprite, new Color(255, 176, 236)) : null;
-        damagedHeartSprite = fullHeartSprite != null ? tintSprite(fullHeartSprite, new Color(255, 156, 228)) : null;
-        emptyHeartSprite = loadImage("empty_heart.png");
+        fullHeartSprite = GameImageLoader.loadImage(getClass(), "full_heart.png");
+        damageFlashHeartSprite = fullHeartSprite != null ? GameImageLoader.tintSprite(fullHeartSprite, new Color(255, 176, 236)) : null;
+        damagedHeartSprite = fullHeartSprite != null ? GameImageLoader.tintSprite(fullHeartSprite, new Color(255, 156, 228)) : null;
+        emptyHeartSprite = GameImageLoader.loadImage(getClass(), "empty_heart.png");
     }
 
     private void loadTransitionSprites() {
-        megamanTransitionSprite = loadImage("megaman.png");
+        megamanTransitionSprite = GameImageLoader.loadImage(getClass(), "megaman.png");
     }
 
     private void loadMenuSprites() {
-        startMenuSprite = loadImage("START.png");
-        openingTextSprite = loadImage("opening_text.png");
-        openingStaticGif = loadAnimatedImage("startup_static.gif");
-        openingStaticSequenceMs = loadGifDurationMillis("startup_static.gif");
-        poisonIconSprite = loadImage("poison_icon.png");
-        poisonIconAttack1Sprite = loadImage("poison_icon_attack1.png");
-        poisonIconAttack2Sprite = loadImage("poison_icon_attack2.png");
+        startMenuSprite = GameImageLoader.loadImage(getClass(), "START.png");
+        openingTextSprite = GameImageLoader.loadImage(getClass(), "opening_text.png");
+        openingStaticGif = GameImageLoader.loadAnimatedImage(getClass(), "startup_static.gif");
+        openingStaticSequenceMs = GameImageLoader.loadGifDurationMillis(getClass(), "startup_static.gif");
+        poisonIconSprite = GameImageLoader.loadImage(getClass(), "poison_icon.png");
+        poisonIconAttack1Sprite = GameImageLoader.loadImage(getClass(), "poison_icon_attack1.png");
+        poisonIconAttack2Sprite = GameImageLoader.loadImage(getClass(), "poison_icon_attack2.png");
         for (int i = 0; i < initialSurgeSprites.length; i++) {
-            initialSurgeSprites[i] = loadImage("initial_surge" + (i + 1) + ".png");
+            initialSurgeSprites[i] = GameImageLoader.loadImage(getClass(), "initial_surge" + (i + 1) + ".png");
         }
     }
 
@@ -3379,197 +3011,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.fillRect(x + 2, y + 2, fillWidth, heartSize - 4);
         g2d.setColor(WHITE);
         g2d.drawRect(x, y, heartSize, heartSize);
-    }
-
-    private BufferedImage loadImage(String fileName) {
-        BufferedImage fromClasspath = loadFromClasspath(fileName);
-        if (fromClasspath != null) {
-            return fromClasspath;
-        }
-        return loadFromFiles(fileName);
-    }
-
-    private Image loadAnimatedImage(String fileName) {
-        URL classpathUrl = getClass().getClassLoader().getResource("assets/" + fileName);
-        if (classpathUrl != null) {
-            return new ImageIcon(classpathUrl).getImage();
-        }
-
-        File[] candidates = {
-                new File("src/assets/" + fileName),
-                new File("assets/" + fileName)
-        };
-        for (File file : candidates) {
-            if (file.isFile()) {
-                return new ImageIcon(file.getAbsolutePath()).getImage();
-            }
-        }
-        return null;
-    }
-
-    private long loadGifDurationMillis(String fileName) {
-        URL classpathUrl = getClass().getClassLoader().getResource("assets/" + fileName);
-        if (classpathUrl != null) {
-            try (ImageInputStream stream = ImageIO.createImageInputStream(classpathUrl.openStream())) {
-                long durationMs = readGifDurationMillis(stream);
-                if (durationMs > 0L) {
-                    return durationMs;
-                }
-            } catch (IOException ignored) {
-                // Fall back to a fixed duration if GIF metadata is unavailable.
-            }
-        }
-
-        File[] candidates = {
-                new File("src/assets/" + fileName),
-                new File("assets/" + fileName)
-        };
-        for (File file : candidates) {
-            if (!file.isFile()) {
-                continue;
-            }
-            try (ImageInputStream stream = ImageIO.createImageInputStream(file)) {
-                long durationMs = readGifDurationMillis(stream);
-                if (durationMs > 0L) {
-                    return durationMs;
-                }
-            } catch (IOException ignored) {
-                return OPENING_STATIC_SEQUENCE_FALLBACK_MS;
-            }
-        }
-
-        return OPENING_STATIC_SEQUENCE_FALLBACK_MS;
-    }
-
-    private long readGifDurationMillis(ImageInputStream stream) throws IOException {
-        if (stream == null) {
-            return 0L;
-        }
-
-        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("gif");
-        if (!readers.hasNext()) {
-            return 0L;
-        }
-
-        ImageReader reader = readers.next();
-        try {
-            reader.setInput(stream, false, false);
-            int frameCount = reader.getNumImages(true);
-            long durationMs = 0L;
-            for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
-                IIOMetadata metadata = reader.getImageMetadata(frameIndex);
-                Node root = metadata.getAsTree(metadata.getNativeMetadataFormatName());
-                durationMs += extractGifFrameDelayMillis(root);
-            }
-            return durationMs;
-        } finally {
-            reader.dispose();
-        }
-    }
-
-    private long extractGifFrameDelayMillis(Node metadataRoot) {
-        if (metadataRoot == null) {
-            return 0L;
-        }
-
-        Node graphicsControlExtension = findMetadataNode(metadataRoot, "GraphicControlExtension");
-        if (graphicsControlExtension == null) {
-            return 0L;
-        }
-
-        NamedNodeMap attributes = graphicsControlExtension.getAttributes();
-        if (attributes == null) {
-            return 0L;
-        }
-
-        Node delayNode = attributes.getNamedItem("delayTime");
-        if (delayNode == null) {
-            return 0L;
-        }
-
-        try {
-            return Long.parseLong(delayNode.getNodeValue()) * 10L;
-        } catch (NumberFormatException ignored) {
-            return 0L;
-        }
-    }
-
-    private Node findMetadataNode(Node node, String targetName) {
-        if (node == null) {
-            return null;
-        }
-        if (targetName.equals(node.getNodeName())) {
-            return node;
-        }
-
-        for (Node child = node.getFirstChild(); child != null; child = child.getNextSibling()) {
-            Node match = findMetadataNode(child, targetName);
-            if (match != null) {
-                return match;
-            }
-        }
-        return null;
-    }
-
-    private BufferedImage loadFromClasspath(String fileName) {
-        URL url = getClass().getClassLoader().getResource("assets/" + fileName);
-        if (url == null) {
-            return null;
-        }
-        try {
-            return toArgbImage(ImageIO.read(url));
-        } catch (IOException ignored) {
-            return null;
-        }
-    }
-
-    private BufferedImage loadFromFiles(String fileName) {
-        File[] candidates = {
-                new File("src/assets/" + fileName),
-                new File("assets/" + fileName)
-        };
-
-        for (File file : candidates) {
-            if (!file.isFile()) {
-                continue;
-            }
-            try {
-                return toArgbImage(ImageIO.read(file));
-            } catch (IOException ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    private BufferedImage toArgbImage(BufferedImage image) {
-        if (image == null) {
-            return null;
-        }
-        if (image.getType() == BufferedImage.TYPE_INT_ARGB) {
-            return image;
-        }
-
-        BufferedImage converted = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g2d = converted.createGraphics();
-        g2d.drawImage(image, 0, 0, null);
-        g2d.dispose();
-        return converted;
-    }
-
-    private BufferedImage tintSprite(BufferedImage sprite, Color tint) {
-        BufferedImage tinted = new BufferedImage(
-                sprite.getWidth(),
-                sprite.getHeight(),
-                BufferedImage.TYPE_INT_ARGB
-        );
-        Graphics2D g2d = tinted.createGraphics();
-        g2d.drawImage(sprite, 0, 0, null);
-        g2d.setComposite(AlphaComposite.SrcIn);
-        g2d.setColor(tint);
-        g2d.fillRect(0, 0, sprite.getWidth(), sprite.getHeight());
-        g2d.dispose();
-        return tinted;
     }
 
     private void drawFrame(Graphics2D g2d, int x, int y, int w, int h, int thickness, Color color) {
@@ -4196,93 +3637,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.fillRect(0, 0, panelWidth, panelHeight);
     }
 
-    private void applyCrtOverlay(Graphics2D g2d, int width, int height) {
-        if (crtOverlayBuffer == null || crtOverlayBuffer.getWidth() != width || crtOverlayBuffer.getHeight() != height) {
-            crtOverlayBuffer = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D overlayG = crtOverlayBuffer.createGraphics();
-            overlayG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-            overlayG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-            overlayG.setComposite(AlphaComposite.Src);
-            overlayG.setColor(new Color(0, 0, 0, 0));
-            overlayG.fillRect(0, 0, width, height);
-            drawCrtGlow(overlayG, width, height);
-            drawCrtMask(overlayG, width, height);
-            if (crtScanlinesEnabled) {
-                drawCrtScanlines(overlayG, width, height);
-            }
-            drawCrtVignette(overlayG, width, height);
-            overlayG.dispose();
-        }
-        g2d.drawImage(crtOverlayBuffer, 0, 0, null);
-    }
-
-
-    private void drawCrtGlow(Graphics2D g2d, int width, int height) {
-        Composite oldComposite = g2d.getComposite();
-        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.12f));
-        g2d.setColor(new Color(120, 220, 255, 255));
-        g2d.fillRect(0, 0, width, height);
-        g2d.setComposite(oldComposite);
-    }
-
-    private void drawCrtMask(Graphics2D g2d, int width, int height) {
-        for (int x = 0; x < width; x += 3) {
-            g2d.setColor(new Color(255, 70, 70, 16));
-            g2d.drawLine(x, 0, x, height);
-            if (x + 1 < width) {
-                g2d.setColor(new Color(120, 255, 120, 14));
-                g2d.drawLine(x + 1, 0, x + 1, height);
-            }
-            if (x + 2 < width) {
-                g2d.setColor(new Color(110, 190, 255, 16));
-                g2d.drawLine(x + 2, 0, x + 2, height);
-            }
-        }
-    }
-
-    private void drawCrtScanlines(Graphics2D g2d, int width, int height) {
-        for (int y = 0; y < height; y += 3) {
-            g2d.setColor(new Color(0, 6, 16, 78));
-            g2d.fillRect(0, y, width, 1);
-        }
-        for (int y = 1; y < height; y += 6) {
-            g2d.setColor(new Color(140, 220, 255, 18));
-            g2d.drawLine(0, y, width, y);
-        }
-    }
-
-    private void drawCrtVignette(Graphics2D g2d, int width, int height) {
-        float centerX = width / 2.0f;
-        float centerY = height / 2.0f;
-        float radius = Math.max(width, height) * 0.72f;
-        RadialGradientPaint vignette = new RadialGradientPaint(
-                centerX,
-                centerY,
-                radius,
-                new float[]{0.0f, 0.72f, 1.0f},
-                new Color[]{
-                        new Color(0, 0, 0, 0),
-                        new Color(0, 0, 0, 35),
-                        new Color(0, 0, 0, 130)
-                }
-        );
-        g2d.setPaint(vignette);
-        g2d.fillRect(0, 0, width, height);
-        drawCrtCornerCurve(g2d, width, height);
-    }
-
-    private void drawCrtCornerCurve(Graphics2D g2d, int width, int height) {
-        int arc = Math.max(36, Math.min(width, height) / 7);
-        Area outer = new Area(new Rectangle(0, 0, width, height));
-        Area inner = new Area(new RoundRectangle2D.Double(3, 3, width - 6.0, height - 6.0, arc, arc));
-        outer.subtract(inner);
-        g2d.setColor(new Color(0, 0, 0, 150));
-        g2d.fill(outer);
-
-        g2d.setColor(new Color(170, 240, 255, 0));
-        g2d.draw(new RoundRectangle2D.Double(2, 2, width - 5.0, height - 5.0, arc, arc));
-    }
-
     private void drawSoul(Graphics2D g2d, int x, int y, int size, Color color) {
         int half = size / 2;
         int[] xs = {x + half, x + size, x + half, x};
@@ -4339,18 +3693,5 @@ public class GamePanel extends JPanel implements ActionListener {
         g2d.drawString(text, x, baselineY - 1);
         g2d.setColor(core);
         g2d.drawString(text, x, baselineY);
-    }
-
-    private Color lerpColor(Color from, Color to, double t) {
-        double clamped = Math.max(0.0, Math.min(1.0, t));
-        int r = (int) Math.round(from.getRed() + ((to.getRed() - from.getRed()) * clamped));
-        int g = (int) Math.round(from.getGreen() + ((to.getGreen() - from.getGreen()) * clamped));
-        int b = (int) Math.round(from.getBlue() + ((to.getBlue() - from.getBlue()) * clamped));
-        int a = (int) Math.round(from.getAlpha() + ((to.getAlpha() - from.getAlpha()) * clamped));
-        return new Color(r, g, b, a);
-    }
-
-    private int clampInt(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
     }
 }
