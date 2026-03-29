@@ -27,7 +27,6 @@ import javax.swing.ActionMap;
 import javax.swing.InputMap;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
-import javax.swing.Timer;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -44,17 +43,20 @@ import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.Stroke;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.locks.LockSupport;
 
 @SuppressWarnings({"serial", "this-escape"})
-public class GamePanel extends JPanel implements ActionListener {
-    private final Timer timer;
+public class GamePanel extends JPanel {
+    private static final long TARGET_FRAME_NANOS = 1_000_000_000L / 120L;
+    private static final long MAX_FRAME_DELTA_NANOS = 50_000_000L;
+
+    private final Object stateLock = new Object();
     private final RoundManager roundManager = new RoundManager();
     private final BackdropEffects backdropEffects = new BackdropEffects();
     private final EnemyKillEffects enemyKillEffects = new EnemyKillEffects();
@@ -78,8 +80,13 @@ public class GamePanel extends JPanel implements ActionListener {
     private BufferedImage poisonIconSprite;
     private BufferedImage poisonIconAttack1Sprite;
     private BufferedImage poisonIconAttack2Sprite;
+    private BufferedImage poisonIconGlowSprite;
+    private BufferedImage poisonIconHighlightSprite;
     private final BufferedImage[] initialSurgeSprites = new BufferedImage[5];
+    private final BufferedImage[] initialSurgeGlowSprites = new BufferedImage[5];
     private BufferedImage sceneBuffer;
+    private Thread gameLoopThread;
+    private volatile boolean gameLoopRunning;
 
     private final Random random = new Random();
     private final List<EncounterNode> roomEncounters = new ArrayList<>();
@@ -192,64 +199,129 @@ public class GamePanel extends JPanel implements ActionListener {
         openingSequenceStartMs = System.currentTimeMillis();
         updateBackgroundMusic();
         AudioManager.playSfx("intro_sound.wav");
-        timer = new Timer(16, this); // ~60 FPS
-        timer.start();
+    }
+
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        startGameLoop();
+    }
+
+    @Override
+    public void removeNotify() {
+        stopGameLoop();
+        super.removeNotify();
+    }
+
+    private void startGameLoop() {
+        if (gameLoopRunning) {
+            return;
+        }
+        gameLoopRunning = true;
+        lastTickNanos = System.nanoTime();
+        gameLoopThread = new Thread(this::runGameLoop, "s3quence-game-loop");
+        gameLoopThread.setDaemon(true);
+        gameLoopThread.start();
+    }
+
+    private void stopGameLoop() {
+        gameLoopRunning = false;
+        Thread loopThread = gameLoopThread;
+        if (loopThread == null) {
+            return;
+        }
+        loopThread.interrupt();
+        if (Thread.currentThread() == loopThread) {
+            return;
+        }
+        try {
+            loopThread.join(250L);
+        } catch (InterruptedException interruptedException) {
+            Thread.currentThread().interrupt();
+        } finally {
+            gameLoopThread = null;
+        }
+    }
+
+    private void runGameLoop() {
+        long nextFrameNanos = System.nanoTime();
+        while (gameLoopRunning) {
+            long now = System.nanoTime();
+            long elapsedNanos = now - lastTickNanos;
+            lastTickNanos = now;
+            double deltaSeconds = Math.min(elapsedNanos, MAX_FRAME_DELTA_NANOS) / 1_000_000_000.0;
+
+            synchronized (stateLock) {
+                updateGame(deltaSeconds);
+            }
+            repaint();
+
+            nextFrameNanos += TARGET_FRAME_NANOS;
+            long sleepNanos = nextFrameNanos - System.nanoTime();
+            if (sleepNanos > 0L) {
+                LockSupport.parkNanos(sleepNanos);
+            } else if (sleepNanos < -(TARGET_FRAME_NANOS * 4L)) {
+                nextFrameNanos = System.nanoTime();
+            }
+        }
     }
 
     @Override
     protected void paintComponent(Graphics g) {
-        super.paintComponent(g);
+        synchronized (stateLock) {
+            super.paintComponent(g);
 
-        Graphics2D g2d = (Graphics2D) g.create();
-        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-        g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+            Graphics2D g2d = (Graphics2D) g.create();
+            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
 
-        int panelWidth = getWidth();
-        int panelHeight = getHeight();
+            int panelWidth = getWidth();
+            int panelHeight = getHeight();
 
-        g2d.setColor(BG);
-        g2d.fillRect(0, 0, panelWidth, panelHeight);
+            g2d.setColor(BG);
+            g2d.fillRect(0, 0, panelWidth, panelHeight);
 
-        int gameWidth = GameConfig.WIDTH;
-        int gameHeight = GameConfig.HEIGHT;
-        boolean fillScreen = aspectModeIndex == 1;
-        double scale = Math.min(panelWidth / (double) gameWidth, panelHeight / (double) gameHeight);
+            int gameWidth = GameConfig.WIDTH;
+            int gameHeight = GameConfig.HEIGHT;
+            boolean fillScreen = aspectModeIndex == 1;
+            double scale = Math.min(panelWidth / (double) gameWidth, panelHeight / (double) gameHeight);
 
-        int renderWidth = fillScreen ? panelWidth : (int) Math.round(gameWidth * scale);
-        int renderHeight = fillScreen ? panelHeight : (int) Math.round(gameHeight * scale);
-        int renderX = fillScreen ? 0 : (panelWidth - renderWidth) / 2;
-        int renderY = fillScreen ? 0 : (panelHeight - renderHeight) / 2;
+            int renderWidth = fillScreen ? panelWidth : (int) Math.round(gameWidth * scale);
+            int renderHeight = fillScreen ? panelHeight : (int) Math.round(gameHeight * scale);
+            int renderX = fillScreen ? 0 : (panelWidth - renderWidth) / 2;
+            int renderY = fillScreen ? 0 : (panelHeight - renderHeight) / 2;
 
-        if (!fillScreen) {
-            drawLetterboxFrame(g2d, panelWidth, panelHeight, renderX, renderY, renderWidth, renderHeight);
+            if (!fillScreen) {
+                drawLetterboxFrame(g2d, panelWidth, panelHeight, renderX, renderY, renderWidth, renderHeight);
+            }
+
+            Graphics2D gameG = (Graphics2D) g2d.create(renderX, renderY, renderWidth, renderHeight);
+            gameG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+            gameG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+            gameG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+
+            if (sceneBuffer == null || sceneBuffer.getWidth() != sceneBufferWidth || sceneBuffer.getHeight() != sceneBufferHeight) {
+                sceneBuffer = new BufferedImage(sceneBufferWidth, sceneBufferHeight, BufferedImage.TYPE_INT_ARGB);
+            }
+
+            Graphics2D sceneG = sceneBuffer.createGraphics();
+            sceneG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+            sceneG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+            sceneG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            sceneG.setColor(BG);
+            sceneG.fillRect(0, 0, sceneBufferWidth, sceneBufferHeight);
+            sceneG.scale(sceneBufferWidth / (double) gameWidth, sceneBufferHeight / (double) gameHeight);
+            renderGameScene(sceneG);
+            sceneG.dispose();
+
+            crtDisplay.ensureGeometry(renderWidth, renderHeight);
+            crtDisplay.drawCurvedScreenImage(gameG, sceneBuffer, renderWidth, renderHeight, crtBleedEnabled, crtBrightnessGain);
+            crtDisplay.applyOverlay(gameG, renderWidth, renderHeight, crtScanlinesEnabled);
+            crtDisplay.drawMatte(gameG, renderWidth, renderHeight);
+
+            gameG.dispose();
+            g2d.dispose();
         }
-
-        Graphics2D gameG = (Graphics2D) g2d.create(renderX, renderY, renderWidth, renderHeight);
-        gameG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-        gameG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-        gameG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-
-        if (sceneBuffer == null || sceneBuffer.getWidth() != sceneBufferWidth || sceneBuffer.getHeight() != sceneBufferHeight) {
-            sceneBuffer = new BufferedImage(sceneBufferWidth, sceneBufferHeight, BufferedImage.TYPE_INT_ARGB);
-        }
-
-        Graphics2D sceneG = sceneBuffer.createGraphics();
-        sceneG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-        sceneG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-        sceneG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-        sceneG.setColor(BG);
-        sceneG.fillRect(0, 0, sceneBufferWidth, sceneBufferHeight);
-        sceneG.scale(sceneBufferWidth / (double) gameWidth, sceneBufferHeight / (double) gameHeight);
-        renderGameScene(sceneG);
-        sceneG.dispose();
-
-        crtDisplay.ensureGeometry(renderWidth, renderHeight);
-        crtDisplay.drawCurvedScreenImage(gameG, sceneBuffer, renderWidth, renderHeight, crtBleedEnabled, crtBrightnessGain);
-        crtDisplay.applyOverlay(gameG, renderWidth, renderHeight, crtScanlinesEnabled);
-        crtDisplay.drawMatte(gameG, renderWidth, renderHeight);
-
-        gameG.dispose();
-        g2d.dispose();
     }
 
     private void renderGameScene(Graphics2D gameG) {
@@ -324,15 +396,7 @@ public class GamePanel extends JPanel implements ActionListener {
         }
     }
 
-    @Override
-    public void actionPerformed(ActionEvent e) {
-        long now = System.nanoTime();
-        double deltaSeconds = (now - lastTickNanos) / 1_000_000_000.0;
-        lastTickNanos = now;
-
-        // Prevent giant movement jumps after focus loss or window stalls.
-        deltaSeconds = Math.min(deltaSeconds, 0.05);
-
+    private void updateGame(double deltaSeconds) {
         if (screen == ScreenState.OPENING) {
             updateOpeningSequence();
         } else if (menuTransitionActive) {
@@ -419,7 +483,6 @@ public class GamePanel extends JPanel implements ActionListener {
         updateBackgroundMusic();
         backdropEffects.update();
         updateEnemyKillEffects();
-        repaint();
     }
 
     private void drawMenu(Graphics2D g2d) {
@@ -1401,18 +1464,20 @@ public class GamePanel extends JPanel implements ActionListener {
 
         Composite oldComposite = g2d.getComposite();
         if (pulse > 0.0) {
-            BufferedImage glowSprite = GameImageLoader.tintSprite(poisonSprite, new Color(120, 255, 170));
-            int glowSize = iconSize + 6;
-            int glowInset = (glowSize - iconSize) / 2;
-            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.06 + (0.06 * pulse))));
-            g2d.drawImage(glowSprite, iconX - glowInset, iconY - glowInset, glowSize, glowSize, null);
+            if (poisonIconGlowSprite != null) {
+                int glowSize = iconSize + 6;
+                int glowInset = (glowSize - iconSize) / 2;
+                g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.06 + (0.06 * pulse))));
+                g2d.drawImage(poisonIconGlowSprite, iconX - glowInset, iconY - glowInset, glowSize, glowSize, null);
+            }
         }
         g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.70f));
         g2d.drawImage(poisonSprite, iconX, iconY, iconSize, iconSize, null);
         if (pulse > 0.0) {
-            BufferedImage glowSprite = GameImageLoader.tintSprite(poisonSprite, new Color(170, 255, 210));
-            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.18 + (0.20 * pulse))));
-            g2d.drawImage(glowSprite, iconX, iconY, iconSize, iconSize, null);
+            if (poisonIconHighlightSprite != null) {
+                g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.18 + (0.20 * pulse))));
+                g2d.drawImage(poisonIconHighlightSprite, iconX, iconY, iconSize, iconSize, null);
+            }
         }
         g2d.setComposite(oldComposite);
 
@@ -1435,11 +1500,13 @@ public class GamePanel extends JPanel implements ActionListener {
 
         Composite oldComposite = g2d.getComposite();
         if (active) {
-            BufferedImage glowSprite = GameImageLoader.tintSprite(sprite, new Color(255, 248, 190));
-            int glowSize = iconSize + 6;
-            int glowInset = (glowSize - iconSize) / 2;
-            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.08 + (0.10 * pulse))));
-            g2d.drawImage(glowSprite, iconX - glowInset, iconY - glowInset, glowSize, glowSize, null);
+            BufferedImage glowSprite = getInitialSurgeGlowSprite();
+            if (glowSprite != null) {
+                int glowSize = iconSize + 6;
+                int glowInset = (glowSize - iconSize) / 2;
+                g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (0.08 + (0.10 * pulse))));
+                g2d.drawImage(glowSprite, iconX - glowInset, iconY - glowInset, glowSize, glowSize, null);
+            }
         }
         g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, active ? 0.82f : 0.70f));
         g2d.drawImage(sprite, iconX, iconY, iconSize, iconSize, null);
@@ -1499,6 +1566,24 @@ public class GamePanel extends JPanel implements ActionListener {
         int frameCount = initialSurgeSprites.length;
         int frameIndex = (int) ((System.currentTimeMillis() / INITIAL_SURGE_FRAME_DURATION_MS) % frameCount);
         BufferedImage frame = initialSurgeSprites[frameIndex];
+        return frame != null ? frame : fallback;
+    }
+
+    private BufferedImage getInitialSurgeGlowSprite() {
+        BufferedImage fallback = null;
+        for (BufferedImage sprite : initialSurgeGlowSprites) {
+            if (sprite != null) {
+                fallback = sprite;
+                break;
+            }
+        }
+        if (fallback == null) {
+            return null;
+        }
+
+        int frameCount = initialSurgeGlowSprites.length;
+        int frameIndex = (int) ((System.currentTimeMillis() / INITIAL_SURGE_FRAME_DURATION_MS) % frameCount);
+        BufferedImage frame = initialSurgeGlowSprites[frameIndex];
         return frame != null ? frame : fallback;
     }
 
@@ -1740,7 +1825,9 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put("confirm_action", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                handleConfirmAction();
+                synchronized (stateLock) {
+                    handleConfirmAction();
+                }
             }
         });
 
@@ -1748,7 +1835,9 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put("go_to_menu", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                handleBackAction();
+                synchronized (stateLock) {
+                    handleBackAction();
+                }
             }
         });
     }
@@ -1762,7 +1851,9 @@ public class GamePanel extends JPanel implements ActionListener {
         actionMap.put(actionName, new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                processDirectionalInput(direction);
+                synchronized (stateLock) {
+                    processDirectionalInput(direction);
+                }
             }
         });
     }
@@ -1778,10 +1869,14 @@ public class GamePanel extends JPanel implements ActionListener {
                             && !roomTransitionActive
                             && !roomIntroActive
                             && !menuTransitionActive) {
-                        setMovementFromKeyCode(e.getKeyCode(), true);
+                        synchronized (stateLock) {
+                            setMovementFromKeyCode(e.getKeyCode(), true);
+                        }
                     }
                 } else if (id == KeyEvent.KEY_RELEASED) {
-                    setMovementFromKeyCode(e.getKeyCode(), false);
+                    synchronized (stateLock) {
+                        setMovementFromKeyCode(e.getKeyCode(), false);
+                    }
                 }
                 return false;
             }
@@ -2912,8 +3007,13 @@ public class GamePanel extends JPanel implements ActionListener {
         poisonIconSprite = GameImageLoader.loadImage(getClass(), "poison_icon.png");
         poisonIconAttack1Sprite = GameImageLoader.loadImage(getClass(), "poison_icon_attack1.png");
         poisonIconAttack2Sprite = GameImageLoader.loadImage(getClass(), "poison_icon_attack2.png");
+        poisonIconGlowSprite = poisonIconSprite != null ? GameImageLoader.tintSprite(poisonIconSprite, new Color(120, 255, 170)) : null;
+        poisonIconHighlightSprite = poisonIconSprite != null ? GameImageLoader.tintSprite(poisonIconSprite, new Color(170, 255, 210)) : null;
         for (int i = 0; i < initialSurgeSprites.length; i++) {
             initialSurgeSprites[i] = GameImageLoader.loadImage(getClass(), "initial_surge" + (i + 1) + ".png");
+            if (initialSurgeSprites[i] != null) {
+                initialSurgeGlowSprites[i] = GameImageLoader.tintSprite(initialSurgeSprites[i], new Color(255, 248, 190));
+            }
         }
     }
 
