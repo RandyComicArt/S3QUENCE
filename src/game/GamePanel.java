@@ -173,6 +173,22 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int[] SEQUENCE_PUNCH_PATTERN = {1, 2, 1, 2};
     private static final String[] FINISHER_SFX_FILES = {"finisher1.wav", "finisher2.wav", "finisher3.wav", "finisher4.wav", "finisher5.wav"};
     private static final float FINISHER_SFX_GAIN_DB = -3.0f;
+    private static final float MENU_NAV_RUMBLE_STRENGTH = 0.14f;
+    private static final int MENU_NAV_RUMBLE_MS = 35;
+    private static final float START_CONFIRM_RUMBLE_STRENGTH = 0.32f;
+    private static final int START_CONFIRM_RUMBLE_MS = 75;
+    private static final float ROOM_ENTRY_RUMBLE_STRENGTH = 0.28f;
+    private static final int ROOM_ENTRY_RUMBLE_MS = 70;
+    private static final float ENEMY_TOUCH_RUMBLE_STRENGTH = 0.38f;
+    private static final int ENEMY_TOUCH_RUMBLE_MS = 80;
+    private static final float KEY_SUCCESS_RUMBLE_STRENGTH = 0.12f;
+    private static final int KEY_SUCCESS_RUMBLE_MS = 28;
+    private static final float KEY_FAIL_RUMBLE_STRENGTH = 0.34f;
+    private static final int KEY_FAIL_RUMBLE_MS = 95;
+    private static final float DAMAGE_RUMBLE_STRENGTH = 0.62f;
+    private static final int DAMAGE_RUMBLE_MS = 130;
+    private static final float SEQUENCE_COMPLETE_RUMBLE_STRENGTH = 0.62f;
+    private static final int SEQUENCE_COMPLETE_RUMBLE_MS = 130;
     private static final float[] FINISHER_SFX_GAIN_OFFSETS_DB = {0.0f, 5.0f, 0.0f, 0.0f, 5.0f};
     private static final int[] RENDER_QUALITY_WIDTHS = {480, 560, 640};
     private static final int[] RENDER_QUALITY_HEIGHTS = {360, 420, 480};
@@ -775,6 +791,9 @@ public class GamePanel extends JPanel implements ActionListener {
         int menuStartY = baseMenuStartY - menuLift;
         int menuLineStep = 42;
 
+        g2d.setFont(TITLE_FONT);
+        drawGlowingString(g2d, "S3QUENCE", menuLeft, menuStartY - 110, WHITE, GLOW_CYAN);
+
         drawMenuOption(g2d, MENU_ITEM_START, "START GAME", menuLeft, menuStartY);
         drawMenuOption(
                 g2d,
@@ -841,6 +860,9 @@ public class GamePanel extends JPanel implements ActionListener {
         double eased = easeInOut(settingsRevealProgress);
         int menuLift = (int) Math.round(300 * eased);
         int menuStartY = baseMenuStartY - menuLift;
+
+        g2d.setFont(TITLE_FONT);
+        drawGlowingString(g2d, "S3QUENCE", menuLeft, menuStartY - 110, WHITE, GLOW_CYAN);
 
         drawMenuOption(g2d, MENU_ITEM_START, "START GAME", menuLeft, menuStartY);
         drawMenuOption(
@@ -1077,6 +1099,7 @@ public class GamePanel extends JPanel implements ActionListener {
         }
         if (menuSelectionIndex != previousIndex) {
             AudioManager.playSfx("tab_switch.wav");
+            controllerInputManager.rumble(MENU_NAV_RUMBLE_STRENGTH, MENU_NAV_RUMBLE_MS);
         }
     }
 
@@ -1146,6 +1169,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void activateSelectedMenuItem() {
         if (menuSelectionIndex == MENU_ITEM_START) {
+            controllerInputManager.rumble(START_CONFIRM_RUMBLE_STRENGTH, START_CONFIRM_RUMBLE_MS);
             startRun();
         } else if (menuSelectionIndex == MENU_ITEM_TEST_ENEMY) {
             cycleTestEnemy(1);
@@ -1167,6 +1191,7 @@ public class GamePanel extends JPanel implements ActionListener {
             settingsSelectionIndex = (settingsSelectionIndex - 1 + getSettingsItemCount()) % getSettingsItemCount();
             if (settingsSelectionIndex != previousIndex) {
                 AudioManager.playSfx("tab_switch.wav");
+                controllerInputManager.rumble(MENU_NAV_RUMBLE_STRENGTH, MENU_NAV_RUMBLE_MS);
             }
             return;
         }
@@ -1175,6 +1200,7 @@ public class GamePanel extends JPanel implements ActionListener {
             settingsSelectionIndex = (settingsSelectionIndex + 1) % getSettingsItemCount();
             if (settingsSelectionIndex != previousIndex) {
                 AudioManager.playSfx("tab_switch.wav");
+                controllerInputManager.rumble(MENU_NAV_RUMBLE_STRENGTH, MENU_NAV_RUMBLE_MS);
             }
             return;
         }
@@ -1220,7 +1246,10 @@ public class GamePanel extends JPanel implements ActionListener {
             shopSelectionIndex = (shopSelectionIndex - 1 + SHOP_ITEM_COUNT) % SHOP_ITEM_COUNT;
         } else if (direction == Direction.DOWN) {
             shopSelectionIndex = (shopSelectionIndex + 1) % SHOP_ITEM_COUNT;
+        } else {
+            return;
         }
+        controllerInputManager.rumble(MENU_NAV_RUMBLE_STRENGTH, MENU_NAV_RUMBLE_MS);
     }
 
     private void purchaseSelectedShopItem() {
@@ -1637,7 +1666,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
             int surgeSegmentWidth = baseOnlyPreviewWidth - totalPreviewWidth;
             if (surgeSegmentWidth > 0) {
-                g2d.setColor(new Color(255, 232, 112, 190));
+                g2d.setColor(new Color(214, 194, 96, 190));
                 g2d.fillRect(
                         ENEMY_BAR_X + 2 + totalPreviewWidth,
                         enemyBarY + 2,
@@ -1648,7 +1677,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
             int basePreviewSegmentWidth = fillWidth - baseOnlyPreviewWidth;
             if (basePreviewSegmentWidth > 0) {
-                g2d.setColor(new Color(251, 142, 255, 152));
+                g2d.setColor(new Color(209, 118, 212, 190));
                 g2d.fillRect(
                         ENEMY_BAR_X + 2 + baseOnlyPreviewWidth,
                         enemyBarY + 2,
@@ -2354,6 +2383,7 @@ public class GamePanel extends JPanel implements ActionListener {
         encounterMusicFile = getEncounterMusicFile(enemy.getArchetype());
         roundManager.configureEncounter(enemy.getArchetype());
         AudioManager.playSfx("encounter_start.wav");
+        controllerInputManager.rumble(ENEMY_TOUCH_RUMBLE_STRENGTH, ENEMY_TOUCH_RUMBLE_MS);
         pendingEncounterIndex = encounterIndex;
         encounterTransitionActive = true;
         encounterTransitionStartMs = System.currentTimeMillis();
@@ -2382,6 +2412,7 @@ public class GamePanel extends JPanel implements ActionListener {
         pendingRoomEntryDirection = exitedDir;
         roomIntroDirection = exitedDir;
         AudioManager.playSfx("next_room.wav");
+        controllerInputManager.rumble(ROOM_ENTRY_RUMBLE_STRENGTH, ROOM_ENTRY_RUMBLE_MS);
     }
 
     private void completeRoomTransition() {
@@ -2422,6 +2453,7 @@ public class GamePanel extends JPanel implements ActionListener {
             registerSequencePunch(completion != null);
         }
         if (progressAfter > progressBefore) {
+            controllerInputManager.rumble(KEY_SUCCESS_RUMBLE_STRENGTH, KEY_SUCCESS_RUMBLE_MS);
             int pendingDamageAfter = roundManager.getPendingDamage();
             registerInitialSurgeDamage(Math.max(0, pendingDamageAfter - pendingDamageBefore));
             addHealthDrainRelief();
@@ -2431,6 +2463,7 @@ public class GamePanel extends JPanel implements ActionListener {
         if (completion == null) {
             boolean triggeredWrongInput = !wrongFlashBefore && roundManager.isWrongFlashActive();
             if (triggeredWrongInput) {
+                controllerInputManager.rumble(KEY_FAIL_RUMBLE_STRENGTH, KEY_FAIL_RUMBLE_MS);
                 clearInitialSurgeState();
                 resetSequencePunchState();
                 if (mistakeGuardCharges > 0) {
@@ -2445,6 +2478,7 @@ public class GamePanel extends JPanel implements ActionListener {
             return;
         }
 
+        controllerInputManager.rumble(SEQUENCE_COMPLETE_RUMBLE_STRENGTH, SEQUENCE_COMPLETE_RUMBLE_MS);
         backdropEffects.triggerHueSweepRipple(completion, roundManager.getTimeLeftMs(), game.model.TimerStyle.BACKDROP_HUE);
 
         EncounterNode currentNode = roomEncounters.get(activeEncounterIndex);
@@ -2680,6 +2714,7 @@ public class GamePanel extends JPanel implements ActionListener {
             return;
         }
 
+        controllerInputManager.rumble(DAMAGE_RUMBLE_STRENGTH, DAMAGE_RUMBLE_MS);
         beginHealthDamageAnimation();
         double nextHealth = Math.max(0.0, playerHealth - amountUnits);
         boolean lethal = nextHealth <= 0.0;

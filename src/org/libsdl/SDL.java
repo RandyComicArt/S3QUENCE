@@ -69,6 +69,7 @@ public final class SDL {
     public static native int SDL_GameControllerGetType(long ptr);
     public static native int SDL_GameControllerGetAxis(long ptr, int axis);
     public static native int SDL_GameControllerGetButton(long ptr, int button);
+    public static native boolean SDL_GameControllerRumble(long ptr, int lowFrequencyRumble, int highFrequencyRumble, int durationMs);
     public static native void SDL_GameControllerUpdate();
     public static native String SDL_GetError();
 }

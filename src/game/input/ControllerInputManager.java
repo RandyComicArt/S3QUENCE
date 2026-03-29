@@ -15,6 +15,7 @@ public final class ControllerInputManager {
     private long activeControllerPtr;
     private long lastRescanNanos;
     private boolean noControllerLogged;
+    private boolean connectedControllerLogged;
     private boolean upHeld;
     private boolean downHeld;
     private boolean leftHeld;
@@ -80,6 +81,20 @@ public final class ControllerInputManager {
             return;
         }
         ensureController(System.nanoTime());
+    }
+
+    public synchronized void rumble(float strength, int durationMs) {
+        if (!initializeIfNeeded()) {
+            return;
+        }
+        ensureController(System.nanoTime());
+        if (activeControllerPtr == 0L) {
+            return;
+        }
+
+        float clampedStrength = Math.max(0.0f, Math.min(1.0f, strength));
+        int rumble = Math.max(0, Math.min(0xFFFF, Math.round(clampedStrength * 0xFFFF)));
+        SDL.SDL_GameControllerRumble(activeControllerPtr, rumble, rumble, Math.max(0, durationMs));
     }
 
     private boolean initializeIfNeeded() {
@@ -175,6 +190,11 @@ public final class ControllerInputManager {
         activeControllerPtr = preferredPtr != 0L ? preferredPtr : fallbackPtr;
         if (activeControllerPtr != 0L) {
             noControllerLogged = false;
+            if (!connectedControllerLogged) {
+                connectedControllerLogged = true;
+                System.out.println("[controller] Connected: " + SDL.SDL_GameControllerName(activeControllerPtr)
+                        + " (type=" + SDL.SDL_GameControllerGetType(activeControllerPtr) + ")");
+            }
             log("Active controller: " + SDL.SDL_GameControllerName(activeControllerPtr)
                     + " type=" + SDL.SDL_GameControllerGetType(activeControllerPtr));
         } else if (!noControllerLogged) {
@@ -202,6 +222,7 @@ public final class ControllerInputManager {
         if (activeControllerPtr != 0L) {
             SDL.SDL_GameControllerClose(activeControllerPtr);
             activeControllerPtr = 0L;
+            connectedControllerLogged = false;
         }
     }
 
