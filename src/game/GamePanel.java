@@ -15,7 +15,6 @@ import game.model.EncounterEnemy;
 import game.model.EncounterNode;
 import game.model.ItemArchetype;
 import game.model.ScreenState;
-import game.model.ShopOption;
 import game.util.GameImageLoader;
 import game.visual.BackdropEffects;
 import game.visual.CrtDisplay;
@@ -44,6 +43,8 @@ import java.awt.Shape;
 import java.awt.Stroke;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.awt.geom.Area;
+import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -59,6 +60,7 @@ public class GamePanel extends JPanel {
     private static final Stroke STROKE_5 = new BasicStroke(5f);
     private static final Color HUD_LINE_WHITE = new Color(255, 255, 255, 210);
     private static final Color HUD_LINE_WHITE_DIM = new Color(255, 255, 255, 70);
+    private static final int LEVEL_UP_CHOICE_COUNT = 3;
 
     private final Object stateLock = new Object();
     private final RoundManager roundManager = new RoundManager();
@@ -97,8 +99,12 @@ public class GamePanel extends JPanel {
 
     private ScreenState screen = ScreenState.OPENING;
     private int roomNumber = 1;
+    private int roomWorldWidth = ROOM_WORLD_W;
+    private int roomWorldHeight = ROOM_WORLD_H;
     private double playerX;
     private double playerY;
+    private final List<Rectangle> roomPathSegments = new ArrayList<>();
+    private Area roomWalkableArea = new Area();
     private int activeEncounterIndex = -1;
     private int pendingEncounterIndex = -1;
     private boolean encounterTransitionActive;
@@ -144,9 +150,17 @@ public class GamePanel extends JPanel {
     private int sequencePunchPatternIndex = -1;
     private long lastSequencePunchMs;
     private int lastFinisherSfxIndex = -1;
-    private int coinCount;
-    private int lastCoinGain;
-    private long lastCoinGainUntilMs;
+    private int playerLevel = 1;
+    private int playerXp;
+    private int displayedPlayerXpLevel = 1;
+    private double displayedPlayerXp;
+    private int skillPoints;
+    private int levelUpSelectionIndex;
+    private int lastXpGain;
+    private long lastXpGainUntilMs;
+    private final int[] playerItemLevels = new int[ItemArchetype.values().length];
+    private final List<ItemArchetype> levelUpChoices = new ArrayList<>();
+    private double radioRevealProgress;
     private String activeMusicFile;
     private String encounterMusicFile = ENCOUNTER_MUSIC_FILES[0];
     private long displayedTimerMs = -1L;
@@ -165,7 +179,6 @@ public class GamePanel extends JPanel {
     private double shopMusicFade;
     private int settingsSelectionIndex = SETTINGS_VIDEO_RENDER_QUALITY;
     private int settingsTabIndex = SETTINGS_TAB_VIDEO;
-    private int shopSelectionIndex;
     private long mistakeGuardCharges;
     private long nextEncounterTimeBonusMs;
     private EnemyArchetype forcedTestEnemy;
@@ -360,10 +373,10 @@ public class GamePanel extends JPanel {
 
         drawHeartHud(gameG);
 
-        if (screen == ScreenState.DUNGEON || screen == ScreenState.SHOP) {
+        if (screen == ScreenState.DUNGEON || screen == ScreenState.LEVEL_UP) {
             drawDungeon(gameG);
-            if (screen == ScreenState.SHOP) {
-                drawShopOverlay(gameG);
+            if (screen == ScreenState.LEVEL_UP || radioRevealProgress > 0.001) {
+                drawLevelUpOverlay(gameG);
             }
             if (encounterBestedTransitionActive) {
                 drawEncounterBestedTransition(gameG);
@@ -480,9 +493,10 @@ public class GamePanel extends JPanel {
         updateMenuHoverAnimation(deltaSeconds);
         updateSettingsRevealAnimation(deltaSeconds);
         updateEncounterMusicMix(deltaSeconds);
-        updateShopMusicFade(deltaSeconds);
+        updateRadioRevealAnimation(deltaSeconds);
         updateTimerBarAnimation(deltaSeconds);
         updatePlayerHealthAnimation(deltaSeconds);
+        updateXpBarAnimation(deltaSeconds);
         updateEnemyHealthAnimation(deltaSeconds);
         updateBackgroundMusic();
         backdropEffects.update();
@@ -736,10 +750,10 @@ public class GamePanel extends JPanel {
         encounterMusicMix = moveTowards(encounterMusicMix, target, rate * deltaSeconds);
     }
 
-    private void updateShopMusicFade(double deltaSeconds) {
-        double target = screen == ScreenState.SHOP ? 1.0 : 0.0;
-        double rate = target > shopMusicFade ? 1.8 : 3.0;
-        shopMusicFade = moveTowards(shopMusicFade, target, rate * deltaSeconds);
+    private void updateRadioRevealAnimation(double deltaSeconds) {
+        double target = screen == ScreenState.LEVEL_UP ? 1.0 : 0.0;
+        double rate = target > radioRevealProgress ? 6.0 : 8.0;
+        radioRevealProgress = moveTowards(radioRevealProgress, target, rate * deltaSeconds);
     }
 
     private double moveTowards(double current, double target, double maxDelta) {
@@ -776,6 +790,9 @@ public class GamePanel extends JPanel {
         }
         if (snapshot.isBackPressed()) {
             handleBackAction();
+        }
+        if (snapshot.isRadioPressed()) {
+            toggleRadioOverlay();
         }
     }
 
@@ -817,8 +834,8 @@ public class GamePanel extends JPanel {
             handleSettingsDirection(direction);
             return;
         }
-        if (screen == ScreenState.SHOP && !menuTransitionActive && !startRunTransitionActive) {
-            handleShopDirection(direction);
+        if (screen == ScreenState.LEVEL_UP && !menuTransitionActive && !startRunTransitionActive) {
+            handleLevelUpDirection(direction);
             return;
         }
         if (screen == ScreenState.ENCOUNTER && !encounterIntroActive && !menuTransitionActive && !startRunTransitionActive) {
@@ -854,16 +871,17 @@ public class GamePanel extends JPanel {
             activateSelectedMenuItem();
         } else if (screen == ScreenState.SETTINGS) {
             activateSelectedSettingsItem();
-        } else if (screen == ScreenState.SHOP) {
-            purchaseSelectedShopItem();
+        } else if (screen == ScreenState.LEVEL_UP) {
+            applySelectedLevelUpChoice();
         } else if (screen == ScreenState.LOST) {
             startRun();
         }
     }
 
     private void handleBackAction() {
-        if (screen == ScreenState.SHOP) {
-            closeShop();
+        if (screen == ScreenState.LEVEL_UP) {
+            closeRadioOverlay();
+            return;
         } else if (screen == ScreenState.SETTINGS) {
             AudioManager.playSfx("back_toggle.wav");
             screen = ScreenState.MENU;
@@ -946,43 +964,75 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void handleShopDirection(Direction direction) {
+    private void handleLevelUpDirection(Direction direction) {
+        if (levelUpChoices.isEmpty()) {
+            return;
+        }
         if (direction == Direction.UP) {
-            shopSelectionIndex = (shopSelectionIndex - 1 + SHOP_ITEM_COUNT) % SHOP_ITEM_COUNT;
+            levelUpSelectionIndex = (levelUpSelectionIndex - 1 + levelUpChoices.size()) % levelUpChoices.size();
         } else if (direction == Direction.DOWN) {
-            shopSelectionIndex = (shopSelectionIndex + 1) % SHOP_ITEM_COUNT;
+            levelUpSelectionIndex = (levelUpSelectionIndex + 1) % levelUpChoices.size();
         } else {
             return;
         }
+        AudioManager.playSfx("tab_switch.wav");
         controllerInputManager.rumble(MENU_NAV_RUMBLE_STRENGTH, MENU_NAV_RUMBLE_MS);
     }
 
-    private void purchaseSelectedShopItem() {
-        ShopOption option = ShopOption.values()[shopSelectionIndex];
-        if (coinCount < option.getCost()) {
+    private void toggleRadioOverlay() {
+        if (menuTransitionActive || startRunTransitionActive || skillPoints <= 0) {
+            return;
+        }
+        if (screen == ScreenState.LEVEL_UP) {
+            closeRadioOverlay();
+            return;
+        }
+        if (screen != ScreenState.DUNGEON || encounterTransitionActive || encounterBestedTransitionActive
+                || roomTransitionActive || roomIntroActive) {
+            return;
+        }
+        openRadioOverlay();
+    }
+
+    private void openRadioOverlay() {
+        if (skillPoints <= 0) {
+            return;
+        }
+        populateLevelUpChoices();
+        levelUpSelectionIndex = 0;
+        clearMovementInput();
+        screen = ScreenState.LEVEL_UP;
+        AudioManager.playSfx("toggle_tab.wav");
+    }
+
+    private void closeRadioOverlay() {
+        if (screen != ScreenState.LEVEL_UP) {
+            return;
+        }
+        levelUpChoices.clear();
+        levelUpSelectionIndex = 0;
+        screen = ScreenState.DUNGEON;
+        AudioManager.playSfx("back_toggle.wav");
+    }
+
+    private void applySelectedLevelUpChoice() {
+        if (levelUpChoices.isEmpty()) {
             return;
         }
 
-        boolean purchased = false;
-        if (option == ShopOption.HEAL && playerHealth < GameConfig.PLAYER_MAX_HEALTH) {
-            playerHealth = Math.min(GameConfig.PLAYER_MAX_HEALTH, playerHealth + GameConfig.SHOP_HEAL_AMOUNT);
-            purchased = true;
-        } else if (option == ShopOption.SHIELD) {
-            mistakeGuardCharges++;
-            purchased = true;
-        } else if (option == ShopOption.TIMER) {
-            nextEncounterTimeBonusMs += GameConfig.SHOP_TIMER_BONUS_MS;
-            purchased = true;
-        }
-
-        if (!purchased) {
-            return;
-        }
-
-        coinCount -= option.getCost();
-        lastCoinGain = -option.getCost();
-        lastCoinGainUntilMs = System.currentTimeMillis() + 760L;
+        ItemArchetype choice = levelUpChoices.get(levelUpSelectionIndex);
+        playerItemLevels[choice.ordinal()]++;
+        skillPoints = Math.max(0, skillPoints - 1);
+        levelUpChoices.clear();
+        levelUpSelectionIndex = 0;
+        clearActiveItemEffects();
         AudioManager.playSfx("bar_fill.wav");
+
+        if (skillPoints > 0) {
+            populateLevelUpChoices();
+        } else {
+            screen = ScreenState.DUNGEON;
+        }
     }
 
     private void cycleTestEnemy(int delta) {
@@ -1021,7 +1071,7 @@ public class GamePanel extends JPanel {
 
         StringBuilder label = new StringBuilder();
         for (ItemArchetype item : ItemArchetype.values()) {
-            if (!hasTestItem(item)) {
+            if (!hasForcedTestItem(item)) {
                 continue;
             }
             if (label.length() > 0) {
@@ -1032,18 +1082,55 @@ public class GamePanel extends JPanel {
         return label.toString();
     }
 
-    private boolean hasTestItem(ItemArchetype item) {
+    private boolean hasForcedTestItem(ItemArchetype item) {
         return item != null && (forcedTestItemMask & (1 << item.ordinal())) != 0;
     }
 
-    private List<ItemArchetype> getEnabledTestItems() {
+    private boolean hasActiveItem(ItemArchetype item) {
+        if (item == null) {
+            return false;
+        }
+        return hasForcedTestItem(item) || playerItemLevels[item.ordinal()] > 0;
+    }
+
+    private int getItemLevel(ItemArchetype item) {
+        if (item == null) {
+            return 0;
+        }
+        int level = playerItemLevels[item.ordinal()];
+        if (level <= 0 && ((forcedTestItemMask & (1 << item.ordinal())) != 0)) {
+            return 1;
+        }
+        return level;
+    }
+
+    private boolean hasAnyPlayerItems() {
+        for (int level : playerItemLevels) {
+            if (level > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<ItemArchetype> getEnabledItems() {
         List<ItemArchetype> enabled = new ArrayList<>();
         for (ItemArchetype item : ItemArchetype.values()) {
-            if (hasTestItem(item)) {
+            if (hasActiveItem(item)) {
                 enabled.add(item);
             }
         }
         return enabled;
+    }
+
+    private String getLevelUpChoiceDescription(ItemArchetype item) {
+        if (item == ItemArchetype.POISON) {
+            return "BUILD TOXIN ON CORRECT INPUTS";
+        }
+        if (item == ItemArchetype.INITIAL_SURGE) {
+            return "BONUS DAMAGE WHILE TIMER IS HIGH";
+        }
+        return "NEW UPGRADE";
     }
 
     private String getRenderQualityLabel() {
@@ -1288,36 +1375,61 @@ public class GamePanel extends JPanel {
         g2d.setColor(TEXT_DIM);
         drawCenteredString(g2d, "DUNGEON ROOM " + roomNumber, GameConfig.WIDTH / 2, ARENA_Y + 28);
 
+        Shape oldClip = g2d.getClip();
+        g2d.clipRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
+
+        int cameraX = getCameraX();
+        int cameraY = getCameraY();
+        g2d.translate(ROOM_X - cameraX, ROOM_Y - cameraY);
+
+        drawDungeonWorldBackdrop(g2d);
+        drawDungeonWorldDoor(g2d);
+        drawDungeonWorldEncounters(g2d);
+        drawEnemyKillEffects(g2d);
+        drawSoul(g2d, (int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, YELLOW);
+
+        g2d.translate(cameraX - ROOM_X, cameraY - ROOM_Y);
+        g2d.setClip(oldClip);
+
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        drawCenteredString(g2d, "EXPLORE THE SIGNAL PATH  |  RED = FIGHT", GameConfig.WIDTH / 2, ARENA_Y + ARENA_H + 34);
+    }
+
+    private void drawEnemyKillEffects(Graphics2D g2d) {
+        enemyKillEffects.draw(g2d, 0, 0, roomWorldWidth, roomWorldHeight);
+    }
+
+    private void drawDungeonWorldBackdrop(Graphics2D g2d) {
+        if (roomWalkableArea == null || roomWalkableArea.isEmpty()) {
+            return;
+        }
+
+        g2d.setColor(new Color(74, 244, 255, 26));
+        g2d.fill(roomWalkableArea);
+
+        g2d.setColor(new Color(74, 244, 255, 220));
+        g2d.draw(roomWalkableArea);
+    }
+
+    private void drawDungeonWorldDoor(Graphics2D g2d) {
+        Rectangle door = getDoorRect();
+        g2d.setColor(allEncountersCleared() ? GREEN : new Color(34, 74, 128));
+        g2d.fillRect(door.x, door.y, door.width, door.height);
+        g2d.setColor(WHITE);
+        g2d.drawRect(door.x, door.y, door.width, door.height);
+    }
+
+    private void drawDungeonWorldEncounters(Graphics2D g2d) {
         for (EncounterNode node : roomEncounters) {
             if (node.isEncounter() && node.isCleared()) {
                 continue;
             }
-            g2d.setColor(node.isShop() ? YELLOW : RED);
+            g2d.setColor(RED);
             g2d.fillRect(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
             g2d.setColor(WHITE);
             g2d.drawRect(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
         }
-        drawEnemyKillEffects(g2d);
-
-        Rectangle door = getDoorRect();
-        if (allEncountersCleared()) {
-            g2d.setColor(GREEN);
-        } else {
-            g2d.setColor(new Color(34, 74, 128));
-        }
-        g2d.fillRect(door.x, door.y, door.width, door.height);
-        g2d.setColor(WHITE);
-        g2d.drawRect(door.x, door.y, door.width, door.height);
-
-        drawSoul(g2d, (int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, YELLOW);
-
-        g2d.setFont(SMALL_FONT);
-        g2d.setColor(TEXT_DIM);
-        drawCenteredString(g2d, "RED = FIGHT   CYAN = SHOP", GameConfig.WIDTH / 2, ARENA_Y + ARENA_H + 34);
-    }
-
-    private void drawEnemyKillEffects(Graphics2D g2d) {
-        enemyKillEffects.draw(g2d, ROOM_X, ROOM_Y, ROOM_W, ROOM_H);
     }
 
     private void drawArena(Graphics2D g2d) {
@@ -1428,7 +1540,7 @@ public class GamePanel extends JPanel {
     }
 
     private void drawActiveItemIndicators(Graphics2D g2d, int enemyBarY) {
-        List<ItemArchetype> activeItems = getEnabledTestItems();
+        List<ItemArchetype> activeItems = getEnabledItems();
         if (activeItems.isEmpty()) {
             return;
         }
@@ -1446,7 +1558,18 @@ public class GamePanel extends JPanel {
             } else if (item == ItemArchetype.INITIAL_SURGE) {
                 drawInitialSurgeIndicator(g2d, baseX, baseY);
             }
+            drawItemLevelLabel(g2d, item, baseX, baseY + ITEM_INDICATOR_SIZE + 26);
         }
+    }
+
+    private void drawItemLevelLabel(Graphics2D g2d, ItemArchetype item, int centerX, int baselineY) {
+        int itemLevel = getItemLevel(item);
+        if (itemLevel <= 0) {
+            return;
+        }
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        drawCenteredString(g2d, "LV " + itemLevel, centerX, baselineY);
     }
 
     private void drawPoisonItemIndicator(Graphics2D g2d, int baseX, int baseY) {
@@ -1622,7 +1745,7 @@ public class GamePanel extends JPanel {
     }
 
     private boolean isInitialSurgeActive(long timeLeftMs, long durationMs) {
-        if (!hasTestItem(ItemArchetype.INITIAL_SURGE)) {
+        if (!hasActiveItem(ItemArchetype.INITIAL_SURGE)) {
             return false;
         }
         if (screen != ScreenState.ENCOUNTER || durationMs <= 0L) {
@@ -1780,40 +1903,55 @@ public class GamePanel extends JPanel {
         drawCenteredString(g2d, "ESC = MENU", GameConfig.WIDTH / 2, y + 138);
     }
 
-    private void drawShopOverlay(Graphics2D g2d) {
-        int w = 520;
-        int h = 270;
-        int x = (GameConfig.WIDTH - w) / 2;
+    private void drawLevelUpOverlay(Graphics2D g2d) {
+        int w = 560;
+        int h = 310;
+        double eased = easeInOut(radioRevealProgress);
+        int closedX = GameConfig.WIDTH + 24;
+        int openX = GameConfig.WIDTH - w - 28;
+        int x = (int) Math.round(closedX + ((openX - closedX) * eased));
         int y = (GameConfig.HEIGHT - h) / 2 + 10;
 
-        g2d.setColor(new Color(3, 16, 38, 232));
+        g2d.setColor(new Color(3, 16, 38, 236));
         g2d.fillRect(x, y, w, h);
         drawFrame(g2d, x, y, w, h, 4, WHITE);
 
         g2d.setFont(HUD_FONT);
-        drawGlowingCenteredString(g2d, "FIELD SHOP", GameConfig.WIDTH / 2, y + 46, YELLOW, GLOW_CYAN);
+        drawGlowingCenteredString(g2d, "LEVEL UP", GameConfig.WIDTH / 2, y + 44, YELLOW, GLOW_CYAN);
 
-        ShopOption[] options = ShopOption.values();
-        for (int i = 0; i < options.length; i++) {
-            ShopOption option = options[i];
-            int rowY = y + 90 + (i * 52);
-            boolean selected = shopSelectionIndex == i;
-            boolean affordable = coinCount >= option.getCost();
-            Color color = selected ? YELLOW : (affordable ? WHITE : TEXT_DIM);
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        drawCenteredString(g2d, "SPEND 1 SKILL POINT  |  STOCK " + skillPoints, x + (w / 2), y + 72);
 
+        int optionY = y + 112;
+        int optionH = 46;
+        for (int i = 0; i < levelUpChoices.size(); i++) {
+            ItemArchetype item = levelUpChoices.get(i);
+            boolean selected = levelUpSelectionIndex == i;
+            int rowY = optionY + (i * 58);
+
+            g2d.setColor(new Color(62, 124, 220, 140));
+            g2d.fillRect(x + 42, rowY - 28, w - 84, optionH);
+            g2d.setColor(selected ? new Color(120, 200, 255, 200) : new Color(92, 162, 240, 160));
+            g2d.fillRect(x + 44, rowY - 26, w - 88, optionH - 4);
+
+            String label = item.getLabel() + "  LV " + (getItemLevel(item) + 1);
             g2d.setFont(BODY_FONT);
-            g2d.setColor(color);
-            String label = (selected ? "> " : "  ") + option.getLabel() + "  [" + option.getCost() + "C]";
-            g2d.drawString(label, x + 42, rowY);
+            if (selected) {
+                drawGlowingString(g2d, label, x + 64, rowY, YELLOW, GLOW_CYAN);
+            } else {
+                g2d.setColor(WHITE);
+                g2d.drawString(label, x + 64, rowY);
+            }
 
             g2d.setFont(SMALL_FONT);
             g2d.setColor(TEXT_DIM);
-            g2d.drawString(option.getDescription(), x + 64, rowY + 20);
+            g2d.drawString(getLevelUpChoiceDescription(item), x + 64, rowY + 18);
         }
 
         g2d.setFont(SMALL_FONT);
         g2d.setColor(TEXT_DIM);
-        drawCenteredString(g2d, "ENTER BUY  |  ESC LEAVE", GameConfig.WIDTH / 2, y + h - 26);
+        drawCenteredString(g2d, "ENTER CHOOSE  |  SHIFT / RT CLOSE", x + (w / 2), y + h - 24);
     }
 
     private void setupKeyBindings() {
@@ -1841,6 +1979,17 @@ public class GamePanel extends JPanel {
             public void actionPerformed(ActionEvent e) {
                 synchronized (stateLock) {
                     handleBackAction();
+                }
+            }
+        });
+
+        inputMap.put(KeyStroke.getKeyStroke("pressed SPACE"), "radio_toggle");
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0, false), "radio_toggle");
+        actionMap.put("radio_toggle", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                synchronized (stateLock) {
+                    toggleRadioOverlay();
                 }
             }
         });
@@ -1902,7 +2051,18 @@ public class GamePanel extends JPanel {
 
     private void startRun() {
         roomNumber = 1;
-        coinCount = 0;
+        playerLevel = 1;
+        playerXp = 0;
+        displayedPlayerXpLevel = 1;
+        displayedPlayerXp = 0.0;
+        skillPoints = 0;
+        levelUpSelectionIndex = 0;
+        lastXpGain = 0;
+        lastXpGainUntilMs = 0L;
+        levelUpChoices.clear();
+        for (int i = 0; i < playerItemLevels.length; i++) {
+            playerItemLevels[i] = 0;
+        }
         playerHealth = GameConfig.PLAYER_MAX_HEALTH;
         displayedPlayerHealth = playerHealth;
         heartDamageFlashUntilMs = 0L;
@@ -1912,9 +2072,7 @@ public class GamePanel extends JPanel {
         timeoutRecoveryTargetMs = 0L;
         mistakeGuardCharges = 0L;
         nextEncounterTimeBonusMs = 0L;
-        shopSelectionIndex = 0;
-        lastCoinGain = 0;
-        lastCoinGainUntilMs = 0L;
+        radioRevealProgress = 0.0;
         clearActiveItemEffects();
         clearMovementInput();
         clearTimerBarAnimation();
@@ -1934,12 +2092,13 @@ public class GamePanel extends JPanel {
         backdropEffects.clearHueSweeps();
         roundManager.configureEncounter(EnemyArchetype.NORMAL);
         roundManager.startGame(true);
-        generateRoom();
+        generateRoom(null);
         AudioManager.playSfx("enter_game.wav");
     }
 
-    private void generateRoom() {
+    private void generateRoom(Direction entryDirection) {
         roomEncounters.clear();
+        roomPathSegments.clear();
         activeEncounterIndex = -1;
         pendingEncounterIndex = -1;
         menuTransitionActive = false;
@@ -1954,77 +2113,248 @@ public class GamePanel extends JPanel {
         enemyKillEffects.clear();
         backdropEffects.clearHueSweeps();
 
-        //randomize door location
-        Direction[] possibleDoors = { Direction.RIGHT, Direction.UP, Direction.DOWN, Direction.LEFT };
-        doorDirection = possibleDoors[random.nextInt(possibleDoors.length)];
-
-        playerX = ROOM_X + 26;
-        playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
+        Direction incomingDirection = entryDirection == null
+                ? getOppositeDirection(getRandomRoomSide())
+                : entryDirection;
+        Direction spawnSide = getOppositeDirection(incomingDirection);
+        doorDirection = getRandomRoomSideExcluding(spawnSide);
+        positionPlayerFromEntry(incomingDirection);
+        buildRoomPath(incomingDirection);
 
         int encounters = 1 + random.nextInt(3);
         int maxTries = 50;
+        Rectangle playerRect = getPlayerRect();
+        Rectangle doorRect = getDoorRect();
         for (int i = 0; i < encounters; i++) {
             EncounterNode node = EncounterNode.createEncounter(generateEnemyHealthForRoom(), rollEnemyArchetype());
-            boolean placed = false;
-            for (int tries = 0; tries < maxTries; tries++) {
-                int nx = ROOM_X + 80 + random.nextInt(Math.max(1, ROOM_W - 220));
-                int ny = ROOM_Y + 40 + random.nextInt(Math.max(1, ROOM_H - 80));
-                Rectangle candidate = new Rectangle(nx, ny, ENCOUNTER_SIZE, ENCOUNTER_SIZE);
-                if (candidate.intersects(new Rectangle((int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, PLAYER_SIZE))) {
-                    continue;
-                }
-                if (candidate.intersects(getDoorRect())) {
-                    continue;
-                }
-                if (intersectsAnyEncounter(candidate)) {
-                    continue;
-                }
-                node.setX(nx);
-                node.setY(ny);
-                placed = true;
-                break;
-            }
-            if (placed) {
+            if (placeEncounterOnPath(node, maxTries, playerRect, doorRect)) {
                 roomEncounters.add(node);
             }
         }
 
-        if (shouldSpawnShopInRoom()) {
-            EncounterNode shopNode = EncounterNode.createShop();
-            placeRoomNode(shopNode, maxTries);
-        }
-
         if (roomEncounters.isEmpty()) {
             EncounterNode fallback = EncounterNode.createEncounter(generateEnemyHealthForRoom(), rollEnemyArchetype());
-            fallback.setX(ROOM_X + ROOM_W / 2);
-            fallback.setY(ROOM_Y + ROOM_H / 2);
+            Rectangle fallbackRect = roomPathSegments.isEmpty()
+                    ? new Rectangle(roomWorldWidth / 2, roomWorldHeight / 2, ROOM_PATH_WIDTH, ROOM_PATH_WIDTH)
+                    : roomPathSegments.get(roomPathSegments.size() / 2);
+            fallback.setX(fallbackRect.x + Math.max(0, (fallbackRect.width - ENCOUNTER_SIZE) / 2));
+            fallback.setY(fallbackRect.y + Math.max(0, (fallbackRect.height - ENCOUNTER_SIZE) / 2));
             roomEncounters.add(fallback);
+        }
+
+        rebuildWalkableArea();
+    }
+
+    private Direction getRandomRoomSide() {
+        Direction[] sides = {Direction.RIGHT, Direction.UP, Direction.DOWN, Direction.LEFT};
+        return sides[random.nextInt(sides.length)];
+    }
+
+    private Direction getOppositeDirection(Direction direction) {
+        if (direction == null) {
+            return Direction.RIGHT;
+        }
+        switch (direction) {
+            case LEFT:
+                return Direction.RIGHT;
+            case RIGHT:
+                return Direction.LEFT;
+            case UP:
+                return Direction.DOWN;
+            case DOWN:
+                return Direction.UP;
+            default:
+                return Direction.RIGHT;
         }
     }
 
-    private boolean shouldSpawnShopInRoom() {
-        return true;
-    }
+    private Direction getRandomRoomSideExcluding(Direction excluded) {
+        Direction[] sides = {Direction.RIGHT, Direction.UP, Direction.DOWN, Direction.LEFT};
+        Direction fallback = excluded == Direction.RIGHT ? Direction.LEFT : Direction.RIGHT;
+        int availableCount = 0;
+        for (Direction side : sides) {
+            if (side != excluded) {
+                availableCount++;
+            }
+        }
+        if (availableCount <= 0) {
+            return fallback;
+        }
 
-    private void placeRoomNode(EncounterNode node, int maxTries) {
-        for (int tries = 0; tries < maxTries; tries++) {
-            int nx = ROOM_X + 80 + random.nextInt(Math.max(1, ROOM_W - 220));
-            int ny = ROOM_Y + 40 + random.nextInt(Math.max(1, ROOM_H - 80));
-            Rectangle candidate = new Rectangle(nx, ny, ENCOUNTER_SIZE, ENCOUNTER_SIZE);
-            if (candidate.intersects(new Rectangle((int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, PLAYER_SIZE))) {
+        int choice = random.nextInt(availableCount);
+        for (Direction side : sides) {
+            if (side == excluded) {
                 continue;
             }
-            if (candidate.intersects(getDoorRect())) {
+            if (choice == 0) {
+                return side;
+            }
+            choice--;
+        }
+        return fallback;
+    }
+
+    private boolean placeEncounterOnPath(EncounterNode node, int maxTries, Rectangle playerRect, Rectangle doorRect) {
+        if (roomPathSegments.isEmpty()) {
+            return false;
+        }
+        for (int tries = 0; tries < maxTries; tries++) {
+            Rectangle segment = roomPathSegments.get(random.nextInt(roomPathSegments.size()));
+            int minX = segment.x + 10;
+            int minY = segment.y + 10;
+            int maxX = segment.x + Math.max(10, segment.width - ENCOUNTER_SIZE - 10);
+            int maxY = segment.y + Math.max(10, segment.height - ENCOUNTER_SIZE - 10);
+            int nx = minX + random.nextInt(Math.max(1, maxX - minX + 1));
+            int ny = minY + random.nextInt(Math.max(1, maxY - minY + 1));
+            Rectangle candidate = new Rectangle(nx, ny, ENCOUNTER_SIZE, ENCOUNTER_SIZE);
+            if (candidate.intersects(playerRect)) {
+                continue;
+            }
+            if (candidate.intersects(doorRect)) {
                 continue;
             }
             if (intersectsAnyEncounter(candidate)) {
                 continue;
             }
+            if (distanceBetweenRectCenters(candidate, playerRect) < 120.0) {
+                continue;
+            }
+            if (distanceBetweenRectCenters(candidate, doorRect) < 120.0) {
+                continue;
+            }
             node.setX(nx);
             node.setY(ny);
-            roomEncounters.add(node);
-            return;
+            return true;
         }
+        return false;
+    }
+
+    private void buildRoomPath(Direction entryDirection) {
+        int startX = clampInt((int) Math.round(playerX) + (PLAYER_SIZE / 2), ROOM_PATH_WIDTH / 2, roomWorldWidth - (ROOM_PATH_WIDTH / 2));
+        int startY = clampInt((int) Math.round(playerY) + (PLAYER_SIZE / 2), ROOM_PATH_WIDTH / 2, roomWorldHeight - (ROOM_PATH_WIDTH / 2));
+        Rectangle doorRect = getDoorRect();
+        int endX = doorRect.x + (doorRect.width / 2);
+        int endY = doorRect.y + (doorRect.height / 2);
+
+        List<int[]> points = new ArrayList<>();
+        points.add(new int[]{startX, startY});
+
+        int waypointCount = 4 + random.nextInt(4);
+        double dx = endX - startX;
+        double dy = endY - startY;
+        boolean horizontalBias = Math.abs(dx) >= Math.abs(dy);
+        int maxOffsetX = Math.max(ROOM_PATH_WIDTH, roomWorldWidth / 5);
+        int maxOffsetY = Math.max(ROOM_PATH_WIDTH, roomWorldHeight / 5);
+
+        for (int i = 1; i <= waypointCount; i++) {
+            double progress = i / (double) (waypointCount + 1);
+            int px = (int) Math.round(startX + (dx * progress));
+            int py = (int) Math.round(startY + (dy * progress));
+            int jitterX = horizontalBias ? random.nextInt((maxOffsetX * 2) + 1) - maxOffsetX : random.nextInt(maxOffsetX + 1) - (maxOffsetX / 2);
+            int jitterY = horizontalBias ? random.nextInt(maxOffsetY + 1) - (maxOffsetY / 2) : random.nextInt((maxOffsetY * 2) + 1) - maxOffsetY;
+            px = clampInt(px + jitterX, ROOM_PATH_WIDTH / 2, roomWorldWidth - (ROOM_PATH_WIDTH / 2));
+            py = clampInt(py + jitterY, ROOM_PATH_WIDTH / 2, roomWorldHeight - (ROOM_PATH_WIDTH / 2));
+            points.add(new int[]{px, py});
+        }
+        points.add(new int[]{endX, endY});
+
+        int[] previous = points.get(0);
+        for (int i = 1; i < points.size(); i++) {
+            int[] current = points.get(i);
+            addJaggedConnection(previous[0], previous[1], current[0], current[1]);
+            previous = current;
+        }
+
+        int branchCount = 2 + random.nextInt(3);
+        for (int i = 0; i < branchCount && points.size() > 2; i++) {
+            int[] anchor = points.get(1 + random.nextInt(points.size() - 2));
+            addSideBranch(anchor[0], anchor[1], horizontalBias);
+        }
+    }
+
+    private void addPathSegment(int x1, int y1, int x2, int y2) {
+        int corridorHalf = ROOM_PATH_WIDTH / 2;
+        int left = Math.min(x1, x2) - corridorHalf;
+        int top = Math.min(y1, y2) - corridorHalf;
+        int width = Math.abs(x2 - x1) + ROOM_PATH_WIDTH;
+        int height = Math.abs(y2 - y1) + ROOM_PATH_WIDTH;
+        Rectangle segment = new Rectangle(
+                clampInt(left, 0, Math.max(0, roomWorldWidth - width)),
+                clampInt(top, 0, Math.max(0, roomWorldHeight - height)),
+                Math.min(roomWorldWidth, Math.max(ROOM_PATH_WIDTH, width)),
+                Math.min(roomWorldHeight, Math.max(ROOM_PATH_WIDTH, height))
+        );
+        roomPathSegments.add(segment);
+    }
+
+    private void addJaggedConnection(int startX, int startY, int endX, int endY) {
+        int currentX = startX;
+        int currentY = startY;
+        int steps = 3 + random.nextInt(4);
+        for (int step = 1; step <= steps; step++) {
+            double progress = step / (double) steps;
+            int targetX = step == steps
+                    ? endX
+                    : clampInt((int) Math.round(startX + ((endX - startX) * progress) + random.nextInt(181) - 90),
+                    ROOM_PATH_WIDTH / 2,
+                    roomWorldWidth - (ROOM_PATH_WIDTH / 2));
+            int targetY = step == steps
+                    ? endY
+                    : clampInt((int) Math.round(startY + ((endY - startY) * progress) + random.nextInt(181) - 90),
+                    ROOM_PATH_WIDTH / 2,
+                    roomWorldHeight - (ROOM_PATH_WIDTH / 2));
+
+            if (random.nextBoolean()) {
+                addPathSegment(currentX, currentY, targetX, currentY);
+                addPathSegment(targetX, currentY, targetX, targetY);
+            } else {
+                addPathSegment(currentX, currentY, currentX, targetY);
+                addPathSegment(currentX, targetY, targetX, targetY);
+            }
+            currentX = targetX;
+            currentY = targetY;
+        }
+    }
+
+    private void addSideBranch(int anchorX, int anchorY, boolean horizontalBias) {
+        int branchLengthPrimary = 80 + random.nextInt(180);
+        int branchLengthSecondary = 40 + random.nextInt(120);
+        int directionA = random.nextBoolean() ? 1 : -1;
+        int directionB = random.nextBoolean() ? 1 : -1;
+
+        int bendX = anchorX;
+        int bendY = anchorY;
+        int endX = anchorX;
+        int endY = anchorY;
+        if (horizontalBias) {
+            bendY = clampInt(anchorY + (directionA * branchLengthPrimary), ROOM_PATH_WIDTH / 2, roomWorldHeight - (ROOM_PATH_WIDTH / 2));
+            endX = clampInt(anchorX + (directionB * branchLengthSecondary), ROOM_PATH_WIDTH / 2, roomWorldWidth - (ROOM_PATH_WIDTH / 2));
+            endY = bendY;
+        } else {
+            bendX = clampInt(anchorX + (directionA * branchLengthPrimary), ROOM_PATH_WIDTH / 2, roomWorldWidth - (ROOM_PATH_WIDTH / 2));
+            endX = bendX;
+            endY = clampInt(anchorY + (directionB * branchLengthSecondary), ROOM_PATH_WIDTH / 2, roomWorldHeight - (ROOM_PATH_WIDTH / 2));
+        }
+
+        addPathSegment(anchorX, anchorY, bendX, bendY);
+        addPathSegment(bendX, bendY, endX, endY);
+    }
+
+    private void rebuildWalkableArea() {
+        Area combined = new Area();
+        for (Rectangle segment : roomPathSegments) {
+            combined.add(new Area(segment));
+        }
+        combined.add(new Area(getDoorRect()));
+        roomWalkableArea = combined;
+    }
+
+    private double distanceBetweenRectCenters(Rectangle a, Rectangle b) {
+        double ax = a.getCenterX();
+        double ay = a.getCenterY();
+        double bx = b.getCenterX();
+        double by = b.getCenterY();
+        return Math.hypot(ax - bx, ay - by);
     }
 
     private EnemyArchetype rollEnemyArchetype() {
@@ -2068,15 +2398,10 @@ public class GamePanel extends JPanel {
     }
 
     private void movePlayer(double dx, double dy) {
-        int minX = ROOM_X + 2;
-        int minY = ROOM_Y + 2;
-        int maxX = ROOM_X + ROOM_W - PLAYER_SIZE - 2;
-        int maxY = ROOM_Y + ROOM_H - PLAYER_SIZE - 2;
+        attemptPlayerMove(dx, 0.0);
+        attemptPlayerMove(0.0, dy);
 
-        playerX = clampDouble(playerX + dx, minX, maxX);
-        playerY = clampDouble(playerY + dy, minY, maxY);
-
-        Rectangle playerRect = new Rectangle((int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, PLAYER_SIZE);
+        Rectangle playerRect = getPlayerRect();
 
         if (!allEncountersCleared()) {
             for (int i = 0; i < roomEncounters.size(); i++) {
@@ -2086,16 +2411,27 @@ public class GamePanel extends JPanel {
                 }
                 Rectangle encounterRect = new Rectangle(node.getX(), node.getY(), ENCOUNTER_SIZE, ENCOUNTER_SIZE);
                 if (playerRect.intersects(encounterRect)) {
-                    if (node.isShop()) {
-                        openShop();
-                    } else {
-                        startEncounter(i);
-                    }
+                    startEncounter(i);
                     return;
                 }
             }
         } else if (playerRect.intersects(getDoorRect())) {
             startRoomTransition(doorDirection);
+        }
+    }
+
+    private void attemptPlayerMove(double dx, double dy) {
+        if (dx == 0.0 && dy == 0.0) {
+            return;
+        }
+
+        double maxX = Math.max(0, roomWorldWidth - PLAYER_SIZE);
+        double maxY = Math.max(0, roomWorldHeight - PLAYER_SIZE);
+        double nextX = clampDouble(playerX + dx, 0.0, maxX);
+        double nextY = clampDouble(playerY + dy, 0.0, maxY);
+        if (isWalkable(nextX, nextY)) {
+            playerX = nextX;
+            playerY = nextY;
         }
     }
 
@@ -2120,20 +2456,6 @@ public class GamePanel extends JPanel {
         encounterTransitionStartMs = System.currentTimeMillis();
     }
 
-    private void openShop() {
-        clearMovementInput();
-        screen = ScreenState.SHOP;
-        shopSelectionIndex = 0;
-        shopMusicFade = 0.0;
-    }
-
-    private void closeShop() {
-        if (screen == ScreenState.SHOP) {
-            screen = ScreenState.DUNGEON;
-            clearMovementInput();
-        }
-    }
-
     private void startRoomTransition(Direction exitedDir) {
         clearMovementInput();
         backdropEffects.clearHueSweeps();
@@ -2154,7 +2476,7 @@ public class GamePanel extends JPanel {
         }
 
         roomNumber++;
-        generateRoom();
+        generateRoom(exitedDir);
 
         Direction forbid;
         switch (exitedDir) {
@@ -2167,7 +2489,7 @@ public class GamePanel extends JPanel {
 
         int safety = 0;
         while (forbid != null && doorDirection == forbid && safety++ < 8) {
-            generateRoom();
+            generateRoom(exitedDir);
         }
 
         positionPlayerFromEntry(exitedDir);
@@ -2242,14 +2564,9 @@ public class GamePanel extends JPanel {
             }
             AudioManager.playSfx(FINISHER_SFX_FILES[nextIndex], FINISHER_SFX_GAIN_DB + offset);
         }
-        int coinReward = calculateComboCoinReward(completion);
-        if (coinReward > 0) {
-            coinCount += coinReward;
-            lastCoinGain = coinReward;
-            lastCoinGainUntilMs = System.currentTimeMillis() + 760L;
-            /*if (!enemyDefeated) {
-                AudioManager.playSfx("coin_collect.wav");
-            }*/
+        int xpReward = calculateSequenceXpReward(completion);
+        if (xpReward > 0) {
+            grantXp(xpReward);
         }
         if (enemyDefeated) {
             finalizeEncounterIfEnemyDefeated(currentNode);
@@ -2298,7 +2615,7 @@ public class GamePanel extends JPanel {
     }
 
     private void applyItemBuildUpOnCorrectKey(int sequenceLength, int keyIndex, long cadenceMs) {
-        if (!hasTestItem(ItemArchetype.POISON)) {
+        if (!hasActiveItem(ItemArchetype.POISON)) {
             return;
         }
         if (screen != ScreenState.ENCOUNTER || encounterIntroActive) {
@@ -2329,8 +2646,8 @@ public class GamePanel extends JPanel {
     }
 
     private void updateItemEffects(double deltaSeconds) {
-        boolean poisonActive = hasTestItem(ItemArchetype.POISON);
-        boolean anyItemActive = forcedTestItemMask != 0;
+        boolean poisonActive = hasActiveItem(ItemArchetype.POISON);
+        boolean anyItemActive = forcedTestItemMask != 0 || hasAnyPlayerItems();
         if (!anyItemActive) {
             clearActiveItemEffects();
             return;
@@ -2502,13 +2819,13 @@ public class GamePanel extends JPanel {
     }
 
     private void spawnEnemyDefeatEffect(EncounterNode node) {
-        int centerX = node.getX() + (ENCOUNTER_SIZE / 2);
-        int centerY = node.getY() + (ENCOUNTER_SIZE / 2);
+        int centerX = ROOM_X + (node.getX() - getCameraX()) + (ENCOUNTER_SIZE / 2);
+        int centerY = ROOM_Y + (node.getY() - getCameraY()) + (ENCOUNTER_SIZE / 2);
         enemyKillEffects.spawn();
         backdropEffects.spawnEnemyDefeatRipples(centerX, centerY);
     }
 
-    private int calculateComboCoinReward(RoundCompletion completion) {
+    private int calculateSequenceXpReward(RoundCompletion completion) {
         int damage = Math.max(0, completion.getResolvedDamage());
         if (damage <= 0) {
             return 0;
@@ -2533,6 +2850,51 @@ public class GamePanel extends JPanel {
         }
 
         return base + lengthBonus + speedBonus + comboTierBonus;
+    }
+
+    private void grantXp(int xpReward) {
+        if (xpReward <= 0) {
+            return;
+        }
+        playerXp += xpReward;
+        lastXpGain = xpReward;
+        lastXpGainUntilMs = System.currentTimeMillis() + 760L;
+
+        int xpRequired = getXpRequiredForLevel(playerLevel);
+        while (playerXp >= xpRequired) {
+            playerXp -= xpRequired;
+            playerLevel++;
+            skillPoints++;
+            xpRequired = getXpRequiredForLevel(playerLevel);
+        }
+        if (displayedPlayerXpLevel > playerLevel) {
+            displayedPlayerXpLevel = playerLevel;
+            displayedPlayerXp = playerXp;
+        }
+    }
+
+    private int getXpRequiredForLevel(int level) {
+        int normalizedLevel = Math.max(1, level);
+        return 18 + ((normalizedLevel - 1) * 8);
+    }
+
+    private void populateLevelUpChoices() {
+        levelUpChoices.clear();
+        ItemArchetype[] items = ItemArchetype.values();
+        List<ItemArchetype> pool = new ArrayList<>();
+        for (ItemArchetype item : items) {
+            pool.add(item);
+        }
+
+        while (levelUpChoices.size() < LEVEL_UP_CHOICE_COUNT && items.length > 0) {
+            if (pool.isEmpty()) {
+                for (ItemArchetype item : items) {
+                    pool.add(item);
+                }
+            }
+            int index = random.nextInt(pool.size());
+            levelUpChoices.add(pool.remove(index));
+        }
     }
 
     private int countUnclearedEncounters() {
@@ -2573,30 +2935,55 @@ public class GamePanel extends JPanel {
         return false;
     }
 
+    private Rectangle getPlayerRect() {
+        return new Rectangle((int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, PLAYER_SIZE);
+    }
+
+    private boolean isWalkable(double candidateX, double candidateY) {
+        if (candidateX < 0.0 || candidateY < 0.0
+                || candidateX + PLAYER_SIZE > roomWorldWidth
+                || candidateY + PLAYER_SIZE > roomWorldHeight) {
+            return false;
+        }
+        Rectangle2D.Double collisionRect = getPlayerCollisionRect(candidateX, candidateY);
+        return roomWalkableArea != null && roomWalkableArea.contains(collisionRect);
+    }
+
+    private Rectangle2D.Double getPlayerCollisionRect(double candidateX, double candidateY) {
+        double insetX = 3.0;
+        double insetY = 3.0;
+        return new Rectangle2D.Double(
+                candidateX + insetX,
+                candidateY + insetY,
+                Math.max(1.0, PLAYER_SIZE - (insetX * 2.0)),
+                Math.max(1.0, PLAYER_SIZE - (insetY * 2.0))
+        );
+    }
+
     private Rectangle getDoorRect() {
         int x;
         int y;
 
         switch (doorDirection) {
             case UP:
-                x = ROOM_X + (ROOM_W - DOOR_H) / 2;
-                y = ROOM_Y;
+                x = (roomWorldWidth - DOOR_H) / 2;
+                y = 0;
                 return new Rectangle(x, y, DOOR_H, DOOR_W);
 
             case DOWN:
-                x = ROOM_X + (ROOM_W - DOOR_H) / 2;
-                y = ROOM_Y + ROOM_H - DOOR_W;
+                x = (roomWorldWidth - DOOR_H) / 2;
+                y = roomWorldHeight - DOOR_W;
                 return new Rectangle(x, y, DOOR_H, DOOR_W);
 
             case LEFT:
-                x = ROOM_X;
-                y = ROOM_Y + (ROOM_H - DOOR_H) / 2;
+                x = 0;
+                y = (roomWorldHeight - DOOR_H) / 2;
                 return new Rectangle(x, y, DOOR_W, DOOR_H);
 
             case RIGHT:
             default:
-                x = ROOM_X + ROOM_W - DOOR_W;
-                y = ROOM_Y + (ROOM_H - DOOR_H) / 2;
+                x = roomWorldWidth - DOOR_W;
+                y = (roomWorldHeight - DOOR_H) / 2;
                 return new Rectangle(x, y, DOOR_W, DOOR_H);
         }
     }
@@ -2605,83 +2992,76 @@ public class GamePanel extends JPanel {
         return Math.max(min, Math.min(max, value));
     }
 
-    //directional room helper method
     private void positionPlayerFromEntry(Direction exitedDir) {
-        // how far from the inner edge to place the player
         final int padding = 26;
 
         switch (exitedDir) {
             case LEFT:
-                // came out the left door of previous room -> spawn near right side of new room
-                playerX = ROOM_X + ROOM_W - padding;
-                playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
+                playerX = roomWorldWidth - padding - PLAYER_SIZE;
+                playerY = (roomWorldHeight / 2.0) - (PLAYER_SIZE / 2.0);
                 break;
             case RIGHT:
-                // came out the right door -> spawn near left side
-                playerX = ROOM_X + padding;
-                playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
+                playerX = padding;
+                playerY = (roomWorldHeight / 2.0) - (PLAYER_SIZE / 2.0);
                 break;
             case UP:
-                // came out the top -> spawn near bottom
-                playerX = ROOM_X + (ROOM_W / 2) - (PLAYER_SIZE / 2);
-                playerY = ROOM_Y + ROOM_H - padding;
+                playerX = (roomWorldWidth / 2.0) - (PLAYER_SIZE / 2.0);
+                playerY = roomWorldHeight - padding - PLAYER_SIZE;
                 break;
             case DOWN:
-                // came out the bottom -> spawn near top
-                playerX = ROOM_X + (ROOM_W / 2) - (PLAYER_SIZE / 2);
-                playerY = ROOM_Y + padding;
+                playerX = (roomWorldWidth / 2.0) - (PLAYER_SIZE / 2.0);
+                playerY = padding;
                 break;
             default:
-                // fallback: stay roughly where your generator used to put you
-                playerX = ROOM_X + 26;
-                playerY = ROOM_Y + (ROOM_H / 2) - (PLAYER_SIZE / 2);
+                playerX = padding;
+                playerY = (roomWorldHeight / 2.0) - (PLAYER_SIZE / 2.0);
         }
 
-        // make sure the player is inside the room bounds
-        int minX = ROOM_X + 2;
-        int minY = ROOM_Y + 2;
-        int maxX = ROOM_X + ROOM_W - PLAYER_SIZE - 2;
-        int maxY = ROOM_Y + ROOM_H - PLAYER_SIZE - 2;
-        playerX = clampDouble(playerX, minX, maxX);
-        playerY = clampDouble(playerY, minY, maxY);
+        int maxX = Math.max(0, roomWorldWidth - PLAYER_SIZE);
+        int maxY = Math.max(0, roomWorldHeight - PLAYER_SIZE);
+        playerX = clampDouble(playerX, 0.0, maxX);
+        playerY = clampDouble(playerY, 0.0, maxY);
 
-        // If the spawn overlaps the door in the new room or an encounter, nudge a bit.
-        // This avoids immediately triggering a new transition or spawning on top of an enemy.
-        Rectangle spawnRect = new Rectangle((int)Math.round(playerX), (int)Math.round(playerY), PLAYER_SIZE, PLAYER_SIZE);
+        Rectangle spawnRect = getPlayerRect();
         Rectangle newDoor = getDoorRect();
-
-        // If spawn intersects the new door, nudge away along the same axis a little.
         if (spawnRect.intersects(newDoor)) {
             if (exitedDir == Direction.LEFT || exitedDir == Direction.RIGHT) {
-                // horizontal door -> nudge vertically a bit
-                playerY = clampDouble(playerY + (PLAYER_SIZE + 6), minY, maxY);
+                playerY = clampDouble(playerY + (PLAYER_SIZE + 6), 0.0, maxY);
             } else {
-                // vertical door -> nudge horizontally a bit
-                playerX = clampDouble(playerX + (PLAYER_SIZE + 6), minX, maxX);
+                playerX = clampDouble(playerX + (PLAYER_SIZE + 6), 0.0, maxX);
             }
-            spawnRect.setLocation((int)Math.round(playerX), (int)Math.round(playerY));
+            spawnRect = getPlayerRect();
         }
 
-        // If spawn intersects any encounter, try a few small offsets
         if (intersectsAnyEncounter(spawnRect)) {
             int tries = 6;
             int offset = 18;
             boolean placed = false;
             for (int i = 0; i < tries && !placed; i++) {
-                // try offsets in a small cross pattern
                 int dx = ((i % 3) - 1) * offset;
                 int dy = ((i / 3) - 1) * offset;
-                double tryX = clampDouble(playerX + dx, minX, maxX);
-                double tryY = clampDouble(playerY + dy, minY, maxY);
-                Rectangle r = new Rectangle((int)Math.round(tryX), (int)Math.round(tryY), PLAYER_SIZE, PLAYER_SIZE);
+                double tryX = clampDouble(playerX + dx, 0.0, maxX);
+                double tryY = clampDouble(playerY + dy, 0.0, maxY);
+                Rectangle r = new Rectangle((int) Math.round(tryX), (int) Math.round(tryY), PLAYER_SIZE, PLAYER_SIZE);
                 if (!intersectsAnyEncounter(r) && !r.intersects(newDoor)) {
                     playerX = tryX;
                     playerY = tryY;
                     placed = true;
                 }
             }
-            // if none of the offsets worked, we leave the clamped spawn — it's probably fine.
         }
+    }
+
+    private int getCameraX() {
+        double playerCenterX = playerX + (PLAYER_SIZE / 2.0);
+        double target = playerCenterX - (ROOM_W / 2.0);
+        return clampInt((int) Math.round(target), 0, Math.max(0, roomWorldWidth - ROOM_W));
+    }
+
+    private int getCameraY() {
+        double playerCenterY = playerY + (PLAYER_SIZE / 2.0);
+        double target = playerCenterY - (ROOM_H / 2.0);
+        return clampInt((int) Math.round(target), 0, Math.max(0, roomWorldHeight - ROOM_H));
     }
 
     private void setMovementHeld(Direction direction, boolean held) {
@@ -2813,6 +3193,41 @@ public class GamePanel extends JPanel {
                 playerHealth,
                 displayedPlayerHealth - (HEART_DAMAGE_SLIDE_PER_SECOND * Math.max(0.0, deltaSeconds))
         );
+    }
+
+    private void updateXpBarAnimation(double deltaSeconds) {
+        double targetXp = Math.max(0.0, playerXp);
+        if (displayedPlayerXpLevel > playerLevel) {
+            displayedPlayerXpLevel = playerLevel;
+            displayedPlayerXp = targetXp;
+            return;
+        }
+
+        double slidePerSecond = Math.max(8.0, getXpRequiredForLevel(displayedPlayerXpLevel) * 1.5);
+
+        if (displayedPlayerXpLevel < playerLevel) {
+            double displayedLevelXpRequired = getXpRequiredForLevel(displayedPlayerXpLevel);
+            displayedPlayerXp = Math.min(
+                    displayedLevelXpRequired,
+                    displayedPlayerXp + (slidePerSecond * Math.max(0.0, deltaSeconds))
+            );
+            if (displayedPlayerXp >= displayedLevelXpRequired - 0.001) {
+                displayedPlayerXpLevel++;
+                displayedPlayerXp = 0.0;
+            }
+            return;
+        }
+
+        if (displayedPlayerXp > targetXp) {
+            displayedPlayerXp = targetXp;
+            return;
+        }
+        if (displayedPlayerXp >= targetXp) {
+            displayedPlayerXp = targetXp;
+            return;
+        }
+
+        displayedPlayerXp = Math.min(targetXp, displayedPlayerXp + (slidePerSecond * Math.max(0.0, deltaSeconds)));
     }
 
     private void updateEnemyHealthAnimation(double deltaSeconds) {
@@ -3084,21 +3499,33 @@ public class GamePanel extends JPanel {
         g2d.setComposite(oldComposite);
 
         g2d.setFont(SMALL_FONT);
-        g2d.setColor(TEXT_DIM);
-        g2d.drawString("COINS " + coinCount, 28, 86);
-        g2d.drawString("GUARDS " + mistakeGuardCharges, 28, 106);
+        int xpRequired = getXpRequiredForLevel(displayedPlayerXpLevel);
+        drawXpBar(g2d, 0, 0, GameConfig.WIDTH, 10, xpRequired <= 0 ? 0.0 : displayedPlayerXp / xpRequired);
+        g2d.setColor(WHITE);
+        g2d.drawString("SKILL PTS " + skillPoints, 28, 106);
+        g2d.drawString("GUARDS " + mistakeGuardCharges, 28, 126);
         if (nextEncounterTimeBonusMs > 0L) {
-            g2d.drawString("NEXT +" + nextEncounterTimeBonusMs + "MS", 28, 126);
+            g2d.drawString("NEXT +" + nextEncounterTimeBonusMs + "MS", 28, 146);
         }
 
-        if (now < lastCoinGainUntilMs && lastCoinGain != 0) {
-            double popProgress = 1.0 - ((lastCoinGainUntilMs - now) / 760.0);
+        if (now < lastXpGainUntilMs && lastXpGain > 0) {
+            double popProgress = 1.0 - ((lastXpGainUntilMs - now) / 760.0);
             int yOffset = (int) Math.round(10 * popProgress);
             int alpha = (int) Math.round(255 * (1.0 - popProgress));
             alpha = Math.max(0, Math.min(255, alpha));
-            String deltaLabel = (lastCoinGain > 0 ? "+" : "") + lastCoinGain + " COINS";
-            g2d.setColor(new Color(255, 214, 112, alpha));
-            g2d.drawString(deltaLabel, 28, 70 - yOffset);
+            g2d.setColor(new Color(120, 220, 255, alpha));
+            g2d.drawString("+" + lastXpGain + " XP", 28, 56 - yOffset);
+        }
+    }
+
+    private void drawXpBar(Graphics2D g2d, int x, int y, int width, int height, double ratio) {
+        double clampedRatio = Math.max(0.0, Math.min(1.0, ratio));
+        g2d.setColor(new Color(90, 96, 112, 72));
+        g2d.fillRect(x, y, width, height);
+        int fillWidth = Math.max(0, Math.min(width, (int) Math.round(width * clampedRatio)));
+        if (fillWidth > 0) {
+            g2d.setColor(new Color(RED.getRed(), RED.getGreen(), RED.getBlue(), 132));
+            g2d.fillRect(x, y, fillWidth, height);
         }
     }
 

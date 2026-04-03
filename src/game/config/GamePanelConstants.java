@@ -47,6 +47,9 @@ public final class GamePanelConstants {
     public static final int ROOM_Y = ARENA_Y + 40;
     public static final int ROOM_W = ARENA_W - 70;
     public static final int ROOM_H = ARENA_H - 65;
+    public static final int ROOM_WORLD_W = ROOM_W * 3;
+    public static final int ROOM_WORLD_H = (int) Math.round(ROOM_H * 2.35);
+    public static final int ROOM_PATH_WIDTH = 132;
     public static final int DOOR_W = 16;
     public static final int DOOR_H = 88;
     public static final int PLAYER_SIZE = 18;

@@ -9,6 +9,7 @@ public final class SDL {
 
     public static final int SDL_CONTROLLER_AXIS_LEFTX = 0;
     public static final int SDL_CONTROLLER_AXIS_LEFTY = 1;
+    public static final int SDL_CONTROLLER_AXIS_TRIGGERRIGHT = 5;
 
     public static final int SDL_CONTROLLER_BUTTON_A = 0;
     public static final int SDL_CONTROLLER_BUTTON_B = 1;

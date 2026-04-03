@@ -6,6 +6,7 @@ public enum ScreenState {
     SETTINGS,
     DUNGEON,
     SHOP,
+    LEVEL_UP,
     ENCOUNTER,
     LOST
 }

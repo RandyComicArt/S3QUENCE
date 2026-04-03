@@ -22,6 +22,7 @@ public final class ControllerInputManager {
     private boolean rightHeld;
     private boolean confirmHeld;
     private boolean backHeld;
+    private boolean radioHeld;
 
     public synchronized Snapshot poll() {
         if (!initializeIfNeeded()) {
@@ -50,6 +51,7 @@ public final class ControllerInputManager {
         boolean nextRightHeld = getButton(SDL.SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || getAxis(SDL.SDL_CONTROLLER_AXIS_LEFTX) >= STICK_THRESHOLD;
         boolean nextConfirmHeld = getButton(SDL.SDL_CONTROLLER_BUTTON_A) || getButton(SDL.SDL_CONTROLLER_BUTTON_X) || getButton(SDL.SDL_CONTROLLER_BUTTON_START);
         boolean nextBackHeld = getButton(SDL.SDL_CONTROLLER_BUTTON_B) || getButton(SDL.SDL_CONTROLLER_BUTTON_Y) || getButton(SDL.SDL_CONTROLLER_BUTTON_BACK);
+        boolean nextRadioHeld = getAxis(SDL.SDL_CONTROLLER_AXIS_TRIGGERRIGHT) >= STICK_THRESHOLD;
 
         Snapshot snapshot = new Snapshot(
                 true,
@@ -59,12 +61,14 @@ public final class ControllerInputManager {
                 nextRightHeld,
                 nextConfirmHeld,
                 nextBackHeld,
+                nextRadioHeld,
                 nextUpHeld && !upHeld,
                 nextDownHeld && !downHeld,
                 nextLeftHeld && !leftHeld,
                 nextRightHeld && !rightHeld,
                 nextConfirmHeld && !confirmHeld,
-                nextBackHeld && !backHeld
+                nextBackHeld && !backHeld,
+                nextRadioHeld && !radioHeld
         );
 
         upHeld = nextUpHeld;
@@ -73,6 +77,7 @@ public final class ControllerInputManager {
         rightHeld = nextRightHeld;
         confirmHeld = nextConfirmHeld;
         backHeld = nextBackHeld;
+        radioHeld = nextRadioHeld;
         return snapshot;
     }
 
@@ -233,6 +238,7 @@ public final class ControllerInputManager {
         rightHeld = false;
         confirmHeld = false;
         backHeld = false;
+        radioHeld = false;
     }
 
     private void log(String message) {
@@ -249,12 +255,14 @@ public final class ControllerInputManager {
         private final boolean rightHeld;
         private final boolean confirmHeld;
         private final boolean backHeld;
+        private final boolean radioHeld;
         private final boolean upPressed;
         private final boolean downPressed;
         private final boolean leftPressed;
         private final boolean rightPressed;
         private final boolean confirmPressed;
         private final boolean backPressed;
+        private final boolean radioPressed;
 
         private Snapshot(
                 boolean connected,
@@ -264,12 +272,14 @@ public final class ControllerInputManager {
                 boolean rightHeld,
                 boolean confirmHeld,
                 boolean backHeld,
+                boolean radioHeld,
                 boolean upPressed,
                 boolean downPressed,
                 boolean leftPressed,
                 boolean rightPressed,
                 boolean confirmPressed,
-                boolean backPressed
+                boolean backPressed,
+                boolean radioPressed
         ) {
             this.connected = connected;
             this.upHeld = upHeld;
@@ -278,16 +288,18 @@ public final class ControllerInputManager {
             this.rightHeld = rightHeld;
             this.confirmHeld = confirmHeld;
             this.backHeld = backHeld;
+            this.radioHeld = radioHeld;
             this.upPressed = upPressed;
             this.downPressed = downPressed;
             this.leftPressed = leftPressed;
             this.rightPressed = rightPressed;
             this.confirmPressed = confirmPressed;
             this.backPressed = backPressed;
+            this.radioPressed = radioPressed;
         }
 
         private static Snapshot disconnected() {
-            return new Snapshot(false, false, false, false, false, false, false, false, false, false, false, false, false);
+            return new Snapshot(false, false, false, false, false, false, false, false, false, false, false, false, false, false, false);
         }
 
         public boolean isConnected() {
@@ -332,6 +344,10 @@ public final class ControllerInputManager {
 
         public boolean isRightPressed() {
             return rightPressed;
+        }
+
+        public boolean isRadioPressed() {
+            return radioPressed;
         }
     }
 }
