@@ -186,10 +186,10 @@ public final class CrtDisplay {
             overlayG.fillRect(0, 0, width, height);
             drawCrtGlow(overlayG, width, height);
             drawCrtMask(overlayG, width, height);
+            drawCrtVignette(overlayG, width, height);
             if (crtScanlinesEnabled) {
                 drawCrtScanlines(overlayG, width, height);
             }
-            drawCrtVignette(overlayG, width, height);
             overlayG.dispose();
         }
         g2d.drawImage(crtOverlayBuffer, 0, 0, null);
@@ -263,13 +263,15 @@ public final class CrtDisplay {
     }
 
     private void drawCrtScanlines(Graphics2D g2d, int width, int height) {
-        for (int y = 0; y < height; y += 3) {
-            g2d.setColor(new Color(0, 6, 16, 78));
+        for (int y = 0; y < height; y += 2) {
+            int darkAlpha = (y % 4 == 0) ? 132 : 96;
+            g2d.setColor(new Color(0, 6, 16, darkAlpha));
             g2d.fillRect(0, y, width, 1);
-        }
-        for (int y = 1; y < height; y += 6) {
-            g2d.setColor(new Color(140, 220, 255, 18));
-            g2d.drawLine(0, y, width, y);
+            if (y + 1 < height) {
+                int glowAlpha = (y % 4 == 0) ? 22 : 14;
+                g2d.setColor(new Color(110, 205, 255, glowAlpha));
+                g2d.fillRect(0, y + 1, width, 1);
+            }
         }
     }
 
