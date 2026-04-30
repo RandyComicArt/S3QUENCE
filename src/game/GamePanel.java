@@ -81,6 +81,7 @@ public class GamePanel extends JPanel {
     private BufferedImage megamanTransitionSprite;
     private BufferedImage startMenuSprite;
     private BufferedImage openingTextSprite;
+    private BufferedImage radioOverlaySprite;
     private Image openingStaticGif;
     private long openingStaticSequenceMs = OPENING_STATIC_SEQUENCE_FALLBACK_MS;
     private BufferedImage poisonIconSprite;
@@ -752,7 +753,7 @@ public class GamePanel extends JPanel {
 
     private void updateRadioRevealAnimation(double deltaSeconds) {
         double target = screen == ScreenState.LEVEL_UP ? 1.0 : 0.0;
-        double rate = target > radioRevealProgress ? 6.0 : 8.0;
+        double rate = target > radioRevealProgress ? 12.0 : 14.0;
         radioRevealProgress = moveTowards(radioRevealProgress, target, rate * deltaSeconds);
     }
 
@@ -968,9 +969,9 @@ public class GamePanel extends JPanel {
         if (levelUpChoices.isEmpty()) {
             return;
         }
-        if (direction == Direction.UP) {
+        if (direction == Direction.UP || direction == Direction.LEFT) {
             levelUpSelectionIndex = (levelUpSelectionIndex - 1 + levelUpChoices.size()) % levelUpChoices.size();
-        } else if (direction == Direction.DOWN) {
+        } else if (direction == Direction.DOWN || direction == Direction.RIGHT) {
             levelUpSelectionIndex = (levelUpSelectionIndex + 1) % levelUpChoices.size();
         } else {
             return;
@@ -980,7 +981,7 @@ public class GamePanel extends JPanel {
     }
 
     private void toggleRadioOverlay() {
-        if (menuTransitionActive || startRunTransitionActive || skillPoints <= 0) {
+        if (menuTransitionActive || startRunTransitionActive) {
             return;
         }
         if (screen == ScreenState.LEVEL_UP) {
@@ -995,10 +996,15 @@ public class GamePanel extends JPanel {
     }
 
     private void openRadioOverlay() {
-        if (skillPoints <= 0) {
+        boolean previewOnly = skillPoints <= 0 && radioOverlaySprite != null;
+        if (skillPoints <= 0 && !previewOnly) {
             return;
         }
-        populateLevelUpChoices();
+        if (skillPoints > 0) {
+            populateLevelUpChoices();
+        } else {
+            levelUpChoices.clear();
+        }
         levelUpSelectionIndex = 0;
         clearMovementInput();
         screen = ScreenState.LEVEL_UP;
@@ -1904,6 +1910,11 @@ public class GamePanel extends JPanel {
     }
 
     private void drawLevelUpOverlay(Graphics2D g2d) {
+        if (radioOverlaySprite != null) {
+            drawRadioOverlaySprite(g2d);
+            return;
+        }
+
         int w = 560;
         int h = 310;
         double eased = easeInOut(radioRevealProgress);
@@ -1952,6 +1963,96 @@ public class GamePanel extends JPanel {
         g2d.setFont(SMALL_FONT);
         g2d.setColor(TEXT_DIM);
         drawCenteredString(g2d, "ENTER CHOOSE  |  SHIFT / RT CLOSE", x + (w / 2), y + h - 24);
+    }
+
+    private void drawRadioOverlaySprite(Graphics2D g2d) {
+        if (radioOverlaySprite == null) {
+            return;
+        }
+
+        int spriteWidth = radioOverlaySprite.getWidth();
+        int spriteHeight = radioOverlaySprite.getHeight();
+        if (spriteWidth <= 0 || spriteHeight <= 0) {
+            return;
+        }
+
+        double eased = easeOutCubic(radioRevealProgress);
+        int drawX = 0;
+        int closedY = GameConfig.HEIGHT + 48;
+        int openY = 0;
+        int drawY = (int) Math.round(closedY + ((openY - closedY) * eased));
+        g2d.setColor(new Color(0, 0, 0, clampInt((int) Math.round(200 * eased), 0, 200)));
+        g2d.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT);
+        g2d.drawImage(radioOverlaySprite, drawX, drawY, GameConfig.WIDTH, GameConfig.HEIGHT, null);
+
+        int shutterHeight = clampInt((int) Math.round((1.0 - eased) * (GameConfig.HEIGHT * 0.55)), 0, GameConfig.HEIGHT);
+        if (shutterHeight > 0) {
+            g2d.setColor(Color.BLACK);
+            g2d.fillRect(0, 0, GameConfig.WIDTH, shutterHeight);
+            g2d.fillRect(0, GameConfig.HEIGHT - shutterHeight, GameConfig.WIDTH, shutterHeight);
+        }
+
+        drawRadioSelectionOverlay(g2d);
+    }
+
+    private void drawRadioSelectionOverlay(Graphics2D g2d) {
+        int panelWidth = 700;
+        int panelHeight = 150;
+        int panelX = (GameConfig.WIDTH - panelWidth) / 2;
+        int panelY = GameConfig.HEIGHT - panelHeight - 28;
+
+        g2d.setColor(new Color(0, 10, 18, 214));
+        g2d.fillRoundRect(panelX, panelY, panelWidth, panelHeight, 18, 18);
+        g2d.setColor(new Color(96, 196, 255, 180));
+        g2d.drawRoundRect(panelX, panelY, panelWidth, panelHeight, 18, 18);
+
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        String header = skillPoints > 0
+                ? "SELECT UPGRADE  |  STOCK " + skillPoints
+                : "RADIO PREVIEW  |  NO SKILL POINTS";
+        drawCenteredString(g2d, header, GameConfig.WIDTH / 2, panelY + 22);
+
+        if (levelUpChoices.isEmpty()) {
+            g2d.setColor(WHITE);
+            drawCenteredString(g2d, "PRESS SHIFT / RT / SPACE TO CLOSE", GameConfig.WIDTH / 2, panelY + 86);
+            return;
+        }
+
+        int cardGap = 18;
+        int cardWidth = 200;
+        int cardHeight = 90;
+        int totalWidth = (cardWidth * levelUpChoices.size()) + (cardGap * Math.max(0, levelUpChoices.size() - 1));
+        int cardX = (GameConfig.WIDTH - totalWidth) / 2;
+        int cardY = panelY + 40;
+
+        for (int i = 0; i < levelUpChoices.size(); i++) {
+            ItemArchetype item = levelUpChoices.get(i);
+            boolean selected = levelUpSelectionIndex == i;
+            int x = cardX + (i * (cardWidth + cardGap));
+
+            g2d.setColor(selected ? new Color(120, 220, 255, 208) : new Color(28, 78, 124, 184));
+            g2d.fillRoundRect(x, cardY, cardWidth, cardHeight, 16, 16);
+            g2d.setColor(selected ? new Color(255, 238, 130) : new Color(150, 228, 255, 164));
+            g2d.drawRoundRect(x, cardY, cardWidth, cardHeight, 16, 16);
+
+            g2d.setFont(BODY_FONT);
+            if (selected) {
+                drawGlowingCenteredString(g2d, item.getLabel(), x + (cardWidth / 2), cardY + 28, YELLOW, GLOW_CYAN);
+            } else {
+                g2d.setColor(WHITE);
+                drawCenteredString(g2d, item.getLabel(), x + (cardWidth / 2), cardY + 28);
+            }
+
+            g2d.setFont(SMALL_FONT);
+            g2d.setColor(TEXT_DIM);
+            drawCenteredString(g2d, "LV " + (getItemLevel(item) + 1), x + (cardWidth / 2), cardY + 49);
+            drawCenteredString(g2d, getLevelUpChoiceDescription(item), x + (cardWidth / 2), cardY + 71);
+        }
+
+        g2d.setFont(SMALL_FONT);
+        g2d.setColor(TEXT_DIM);
+        drawCenteredString(g2d, "LEFT / RIGHT SELECT  |  ENTER CONFIRM  |  SHIFT / RT CLOSE", GameConfig.WIDTH / 2, panelY + panelHeight - 14);
     }
 
     private void setupKeyBindings() {
@@ -2553,6 +2654,7 @@ public class GamePanel extends JPanel {
 
         boolean enemyDefeated = currentNode.isCleared();
         if (completion != null && !enemyDefeated) {
+            AudioManager.playClickSfx();
             int nextIndex = random.nextInt(FINISHER_SFX_FILES.length);
             if (FINISHER_SFX_FILES.length > 1 && nextIndex == lastFinisherSfxIndex) {
                 nextIndex = (nextIndex + 1 + random.nextInt(FINISHER_SFX_FILES.length - 1)) % FINISHER_SFX_FILES.length;
@@ -3053,14 +3155,14 @@ public class GamePanel extends JPanel {
     }
 
     private int getCameraX() {
-        double playerCenterX = playerX + (PLAYER_SIZE / 2.0);
-        double target = playerCenterX - (ROOM_W / 2.0);
+        int preferredPlayerScreenX = (ROOM_W - PLAYER_SIZE) / 2;
+        double target = playerX - preferredPlayerScreenX;
         return clampInt((int) Math.round(target), 0, Math.max(0, roomWorldWidth - ROOM_W));
     }
 
     private int getCameraY() {
-        double playerCenterY = playerY + (PLAYER_SIZE / 2.0);
-        double target = playerCenterY - (ROOM_H / 2.0);
+        int preferredPlayerScreenY = (ROOM_H - PLAYER_SIZE) / 2;
+        double target = playerY - preferredPlayerScreenY;
         return clampInt((int) Math.round(target), 0, Math.max(0, roomWorldHeight - ROOM_H));
     }
 
@@ -3421,6 +3523,7 @@ public class GamePanel extends JPanel {
     private void loadMenuSprites() {
         startMenuSprite = GameImageLoader.loadImage(getClass(), "START.png");
         openingTextSprite = GameImageLoader.loadImage(getClass(), "opening_text.png");
+        radioOverlaySprite = GameImageLoader.loadImage(getClass(), "radio.png");
         openingStaticGif = GameImageLoader.loadAnimatedImage(getClass(), "startup_static.gif");
         openingStaticSequenceMs = GameImageLoader.loadGifDurationMillis(getClass(), "startup_static.gif");
         poisonIconSprite = GameImageLoader.loadImage(getClass(), "poison_icon.png");
