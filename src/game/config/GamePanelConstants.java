@@ -43,10 +43,10 @@ public final class GamePanelConstants {
     public static final int ENEMY_BAR_X = ARENA_X + ((ARENA_W - ENEMY_BAR_W) / 2);
     public static final int ENEMY_BAR_H = 50;
 
-    public static final int ROOM_X = ARENA_X + 35;
-    public static final int ROOM_Y = ARENA_Y + 40;
-    public static final int ROOM_W = ARENA_W - 70;
-    public static final int ROOM_H = ARENA_H - 65;
+    public static final int ROOM_X = 72;
+    public static final int ROOM_Y = 112;
+    public static final int ROOM_W = GameConfig.WIDTH - 144;
+    public static final int ROOM_H = 500;
     public static final int ROOM_WORLD_W = ROOM_W * 3;
     public static final int ROOM_WORLD_H = (int) Math.round(ROOM_H * 2.35);
     public static final int ROOM_PATH_WIDTH = 132;
