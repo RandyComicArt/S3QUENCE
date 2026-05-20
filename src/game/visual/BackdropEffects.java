@@ -19,6 +19,7 @@ public class BackdropEffects {
     private static final Color BG_DEEP = new Color(0, 2, 10);
     private static final Color BG_MID = new Color(5, 18, 48);
     private static final Color WAVEFORM_COLOR = new Color(120, 230, 255);
+    private static final Color WAVEFORM_PINK = new Color(255, 122, 200);
     private static final int BACKDROP_GRID_SPACING = 52;
     private static final int RIPPLE_MAX_COUNT = 16;
     private static final int HUE_SWEEP_MAX_COUNT = 8;
@@ -32,6 +33,8 @@ public class BackdropEffects {
     private final List<BackgroundRipple> backgroundRipples = new ArrayList<>();
     private final List<HueSweepRipple> hueSweepRipples = new ArrayList<>();
     private double waveformEnergy;
+    private double pinkWaveEnergy;
+    private double pinkHitPulse;
 
     private static class BackgroundRipple {
         int x;
@@ -75,10 +78,15 @@ public class BackdropEffects {
         long nowMs = System.currentTimeMillis();
         backgroundRipples.removeIf(ripple -> nowMs - ripple.startMs > ripple.durationMs);
         hueSweepRipples.removeIf(ripple -> nowMs - ripple.startMs > ripple.durationMs);
+        pinkHitPulse += (0.0 - pinkHitPulse) * 0.22;
     }
 
     public void clearHueSweeps() {
         hueSweepRipples.clear();
+    }
+
+    public void triggerPinkWaveHitPulse() {
+        pinkHitPulse = Math.min(1.0, Math.max(pinkHitPulse, 0.92));
     }
 
     public void spawnInputRipple(
@@ -200,6 +208,8 @@ public class BackdropEffects {
         double rawEnergy = AudioManager.getMusicEnergy();
         double targetEnergy = Math.pow(clampDouble(rawEnergy, 0.0, 1.0), 0.7);
         waveformEnergy += (targetEnergy - waveformEnergy) * WAVEFORM_ENERGY_SMOOTH;
+        double pinkTargetEnergy = Math.pow(clampDouble(rawEnergy, 0.0, 1.0), 0.8);
+        pinkWaveEnergy += (pinkTargetEnergy - pinkWaveEnergy) * 0.16;
 
         double amplitude = 22.0 + (waveformEnergy * 120.0);
         double lowFreq = 0.0029;
@@ -211,9 +221,33 @@ public class BackdropEffects {
         double breath = 0.75 + (0.25 * Math.sin(t * 0.28));
         int baseY = (int) Math.round(GameConfig.HEIGHT * WAVEFORM_BASE_Y_RATIO);
         int alpha = clampAlpha(32 + (int) Math.round(90 * waveformEnergy));
+        double pinkPulseAmount = pinkHitPulse * (0.75 + (0.25 * pinkWaveEnergy));
+        double pinkAmplitude = (16.0 + (pinkWaveEnergy * 48.0)) * (1.0 + (pinkPulseAmount * 0.16));
+        double pinkBreath = 0.78 + (0.12 * Math.sin((t * 0.34) + 0.4)) + (pinkPulseAmount * 0.08);
+        int pinkAlpha = clampAlpha(70 + (int) Math.round(84 * pinkWaveEnergy) + (int) Math.round(132 * pinkPulseAmount));
+        int pinkGlowAlpha = clampAlpha(34 + (int) Math.round(76 * pinkWaveEnergy) + (int) Math.round(150 * pinkPulseAmount));
+        int pinkFlashAlpha = clampAlpha((int) Math.round(220 * pinkPulseAmount));
 
         Color lineColor = new Color(WAVEFORM_COLOR.getRed(), WAVEFORM_COLOR.getGreen(), WAVEFORM_COLOR.getBlue(), alpha);
+        Color pinkLineColor = new Color(WAVEFORM_PINK.getRed(), WAVEFORM_PINK.getGreen(), WAVEFORM_PINK.getBlue(), pinkAlpha);
         Stroke oldStroke = g2d.getStroke();
+
+        g2d.setStroke(new BasicStroke((float) (2.4 + (pinkWaveEnergy * 1.0) + (pinkPulseAmount * 0.9)), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g2d.setColor(new Color(WAVEFORM_PINK.getRed(), WAVEFORM_PINK.getGreen(), WAVEFORM_PINK.getBlue(), pinkGlowAlpha));
+        drawWaveformCurve(g2d, baseY - 18.0, pinkAmplitude, lowFreq * 0.76, midFreq * 0.62, highFreq * 0.34,
+                (t * 0.48) + 1.1, (t * 0.92) - 0.6, (t * 1.34) + 0.25, pinkBreath);
+
+        g2d.setStroke(new BasicStroke((float) (1.45 + (pinkWaveEnergy * 0.4) + (pinkPulseAmount * 0.4)), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g2d.setColor(pinkLineColor);
+        drawWaveformCurve(g2d, baseY - 18.0, pinkAmplitude, lowFreq * 0.76, midFreq * 0.62, highFreq * 0.34,
+                (t * 0.48) + 1.1, (t * 0.92) - 0.6, (t * 1.34) + 0.25, pinkBreath);
+
+        if (pinkFlashAlpha > 8) {
+            g2d.setStroke(new BasicStroke((float) (0.9 + (pinkPulseAmount * 0.55)), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2d.setColor(new Color(255, 226, 242, pinkFlashAlpha));
+            drawWaveformCurve(g2d, baseY - 18.0, pinkAmplitude, lowFreq * 0.76, midFreq * 0.62, highFreq * 0.34,
+                    (t * 0.48) + 1.1, (t * 0.92) - 0.6, (t * 1.34) + 0.25, pinkBreath);
+        }
 
         for (int pass = 0; pass < WAVEFORM_TRAIL_COUNT; pass++) {
             double trailRatio = pass / (double) Math.max(1, WAVEFORM_TRAIL_COUNT - 1);
@@ -222,6 +256,7 @@ public class BackdropEffects {
             int trailAlpha = clampAlpha(alpha - (int) Math.round(22 * trailRatio));
 
             Color trailGlow = new Color(WAVEFORM_COLOR.getRed(), WAVEFORM_COLOR.getGreen(), WAVEFORM_COLOR.getBlue(), Math.max(0, trailAlpha - 20));
+
             g2d.setStroke(new BasicStroke((float) (3.6 + (trailEnergy * 2.2)), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             g2d.setColor(trailGlow);
             drawWaveformCurve(g2d, baseY + trailOffset, amplitude * (0.92 + (trailRatio * 0.1)), lowFreq, midFreq, highFreq,

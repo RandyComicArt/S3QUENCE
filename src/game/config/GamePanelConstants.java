@@ -73,6 +73,12 @@ public final class GamePanelConstants {
     public static final long START_RUN_TRANSITION_MS = 1250L;
     public static final long START_RUN_TRANSITION_SWITCH_MS = 420L;
     public static final long START_RUN_MUSIC_DELAY_MS = 320L;
+    /** Zoom for {@code radio.png} inside the dungeon level-up carousel (1.0 = fit viewport). */
+    public static final double RADIO_ART_DISPLAY_ZOOM = 1.07;
+    public static final int RADIO_VIEWPORT_X = 10;
+    public static final int RADIO_VIEWPORT_Y = 48;
+    public static final int RADIO_VIEWPORT_W = GameConfig.WIDTH - (RADIO_VIEWPORT_X * 2);
+    public static final int RADIO_VIEWPORT_H = GameConfig.HEIGHT - (RADIO_VIEWPORT_Y + 36);
     public static final int ENCOUNTER_TEXT_HANDOFF_OFFSET = 120;
     public static final double TIMER_REFILL_ANIM_PER_SECOND = 3600.0;
     public static final int MENU_ITEM_START = 0;

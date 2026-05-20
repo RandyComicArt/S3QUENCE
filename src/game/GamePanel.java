@@ -81,7 +81,6 @@ public class GamePanel extends JPanel {
     private BufferedImage emptyHeartSprite;
     private BufferedImage megamanTransitionSprite;
     private BufferedImage startMenuSprite;
-    private BufferedImage titleSplashSprite;
     private BufferedImage openingTextSprite;
     private BufferedImage radioOverlaySprite;
     private Image openingStaticGif;
@@ -120,6 +119,7 @@ public class GamePanel extends JPanel {
     private long roomTransitionStartMs;
     private boolean roomIntroActive;
     private long roomIntroStartMs;
+    private RoomRenderState roomTransitionPreviousState;
     private Direction pendingRoomEntryDirection;
     private Direction roomIntroDirection;
     private boolean keyboardMoveUpHeld;
@@ -210,6 +210,34 @@ public class GamePanel extends JPanel {
     private Clip openingStaticSoundClip;
     private volatile boolean controllerPrewarmStarted;
     private volatile boolean controllerPrewarmFinished;
+
+    private static final class RoomRenderState {
+        private final int worldWidth;
+        private final int worldHeight;
+        private final double playerX;
+        private final double playerY;
+        private final Direction doorDirection;
+        private final Area walkableArea;
+        private final List<EncounterNode> encounters;
+
+        private RoomRenderState(
+                int worldWidth,
+                int worldHeight,
+                double playerX,
+                double playerY,
+                Direction doorDirection,
+                Area walkableArea,
+                List<EncounterNode> encounters
+        ) {
+            this.worldWidth = worldWidth;
+            this.worldHeight = worldHeight;
+            this.playerX = playerX;
+            this.playerY = playerY;
+            this.doorDirection = doorDirection;
+            this.walkableArea = walkableArea;
+            this.encounters = encounters;
+        }
+    }
 
     public GamePanel() {
         setPreferredSize(new Dimension(GameConfig.WIDTH, GameConfig.HEIGHT));
@@ -386,6 +414,8 @@ public class GamePanel extends JPanel {
         if (screen == ScreenState.DUNGEON || screen == ScreenState.LEVEL_UP) {
             if (screen == ScreenState.LEVEL_UP || radioRevealProgress > 0.001) {
                 drawDungeonRadioCarousel(gameG);
+            } else if (roomTransitionActive) {
+                // Room transition renders both the outgoing and incoming rooms itself.
             } else {
                 drawDungeon(gameG);
             }
@@ -435,7 +465,6 @@ public class GamePanel extends JPanel {
             if (screen == ScreenState.DUNGEON
                     && !encounterTransitionActive
                     && !encounterBestedTransitionActive
-                    && !roomTransitionActive
                     && !roomIntroActive) {
                 updateDungeonMovement(deltaSeconds);
             }
@@ -465,8 +494,8 @@ public class GamePanel extends JPanel {
                 if (elapsedMs >= ROOM_TRANSITION_MS + ROOM_TRANSITION_HOLD_MS) {
                     roomTransitionActive = false;
                     completeRoomTransition();
-                    roomIntroActive = true;
-                    roomIntroStartMs = System.currentTimeMillis();
+                    roomIntroActive = false;
+                    roomIntroStartMs = 0L;
                 }
             }
             if (encounterIntroActive) {
@@ -516,12 +545,11 @@ public class GamePanel extends JPanel {
 
     private void drawMenu(Graphics2D g2d) {
         int menuLeft = 70;
-        int baseMenuStartY = (GameConfig.HEIGHT / 2) - 5;
+        int menuLineStep = 42;
+        int menuBottomMargin = 56;
+        int baseMenuStartY = GameConfig.HEIGHT - menuBottomMargin - (menuLineStep * 3);
         int menuLift = (int) Math.round(300 * easeInOut(settingsRevealProgress));
         int menuStartY = baseMenuStartY - menuLift;
-        int menuLineStep = 42;
-
-        drawMenuTitleSplash(g2d);
 
         drawMenuOption(g2d, MENU_ITEM_START, "START GAME", menuLeft, menuStartY);
         drawMenuOption(
@@ -539,27 +567,6 @@ public class GamePanel extends JPanel {
                 menuStartY + (menuLineStep * 2)
         );
         drawMenuOption(g2d, MENU_ITEM_SETTINGS, "SETTINGS", menuLeft, menuStartY + (menuLineStep * 3));
-    }
-
-    private void drawMenuTitleSplash(Graphics2D g2d) {
-        if (titleSplashSprite == null) {
-            g2d.setFont(TITLE_FONT);
-            drawGlowingString(g2d, "S3QUENCE", 70, 140, WHITE, GLOW_CYAN);
-            return;
-        }
-
-        double widthScale = (GameConfig.WIDTH * 1.0) / titleSplashSprite.getWidth();
-        double heightScale = (GameConfig.HEIGHT * 0.8) / titleSplashSprite.getHeight();
-        double scale = Math.min(widthScale, heightScale);
-        int drawWidth = Math.max(1, (int) Math.round(titleSplashSprite.getWidth() * scale));
-        int drawHeight = Math.max(1, (int) Math.round(titleSplashSprite.getHeight() * scale));
-        int drawX = (GameConfig.WIDTH - drawWidth) / 2 - 5;
-        int drawY = 320;
-
-        Composite oldComposite = g2d.getComposite();
-        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.7f));
-        g2d.drawImage(titleSplashSprite, drawX, drawY, drawWidth, drawHeight, null);
-        g2d.setComposite(oldComposite);
     }
 
     private void drawOpeningSplash(Graphics2D g2d) {
@@ -606,12 +613,11 @@ public class GamePanel extends JPanel {
     private void drawSettingsMenu(Graphics2D g2d) {
         int menuLeft = 70;
         int menuLineStep = 42;
-        int baseMenuStartY = (GameConfig.HEIGHT / 2) + 15;
+        int menuBottomMargin = 56;
+        int baseMenuStartY = GameConfig.HEIGHT - menuBottomMargin - (menuLineStep * 3);
         double eased = easeInOut(settingsRevealProgress);
         int menuLift = (int) Math.round(300 * eased);
         int menuStartY = baseMenuStartY - menuLift;
-
-        drawMenuTitleSplash(g2d);
 
         drawMenuOption(g2d, MENU_ITEM_START, "START GAME", menuLeft, menuStartY);
         drawMenuOption(
@@ -782,7 +788,7 @@ public class GamePanel extends JPanel {
 
     private void updateRadioRevealAnimation(double deltaSeconds) {
         double target = screen == ScreenState.LEVEL_UP && !radioClosing ? 1.0 : 0.0;
-        double rate = target > radioRevealProgress ? 12.0 : 14.0;
+        double rate = target > radioRevealProgress ? 1.1 : 1.1;
         radioRevealProgress = moveTowards(radioRevealProgress, target, rate * deltaSeconds);
         if (radioClosing && radioRevealProgress <= 0.001) {
             radioRevealProgress = 0.0;
@@ -1019,11 +1025,17 @@ public class GamePanel extends JPanel {
             return;
         }
         if (screen == ScreenState.LEVEL_UP) {
+            if (radioClosing || radioRevealProgress < 0.999) {
+                return;
+            }
             closeRadioOverlay();
             return;
         }
         if (screen != ScreenState.DUNGEON || encounterTransitionActive || encounterBestedTransitionActive
                 || roomTransitionActive || roomIntroActive) {
+            return;
+        }
+        if (radioRevealProgress > 0.001) {
             return;
         }
         openRadioOverlay();
@@ -1405,6 +1417,24 @@ public class GamePanel extends JPanel {
     }
 
     private void drawDungeon(Graphics2D g2d) {
+        drawDungeon(g2d, roomWorldWidth, roomWorldHeight, playerX, playerY, doorDirection, roomWalkableArea, roomEncounters, true);
+    }
+
+    private void drawDungeon(Graphics2D g2d, RoomRenderState state) {
+        drawDungeon(g2d, state.worldWidth, state.worldHeight, state.playerX, state.playerY, state.doorDirection, state.walkableArea, state.encounters, false);
+    }
+
+    private void drawDungeon(
+            Graphics2D g2d,
+            int worldWidth,
+            int worldHeight,
+            double renderPlayerX,
+            double renderPlayerY,
+            Direction renderDoorDirection,
+            Area renderWalkableArea,
+            List<EncounterNode> renderEncounters,
+            boolean includeKillEffects
+    ) {
         g2d.setColor(ROOM_GLASS);
         g2d.fillRect(ROOM_X + 2, ROOM_Y + 2, ROOM_W - 3, ROOM_H - 3);
         drawFrame(g2d, ROOM_X, ROOM_Y, ROOM_W, ROOM_H, 2, DUNGEON_FRAME_PINK);
@@ -1412,47 +1442,62 @@ public class GamePanel extends JPanel {
         Shape oldClip = g2d.getClip();
         g2d.clipRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
 
-        int cameraX = getCameraX();
-        int cameraY = getCameraY();
+        int cameraX = getCameraX(renderPlayerX, worldWidth);
+        int cameraY = getCameraY(renderPlayerY, worldHeight);
         g2d.translate(ROOM_X - cameraX, ROOM_Y - cameraY);
 
-        drawDungeonWorldBackdrop(g2d);
-        drawDungeonWorldDoor(g2d);
-        drawDungeonWorldEncounters(g2d);
-        drawEnemyKillEffects(g2d);
-        drawSoul(g2d, (int) Math.round(playerX), (int) Math.round(playerY), PLAYER_SIZE, YELLOW);
+        drawDungeonWorldBackdrop(g2d, renderWalkableArea);
+        drawDungeonWorldDoor(g2d, getDoorRect(renderDoorDirection, worldWidth, worldHeight), renderEncounters);
+        drawDungeonWorldEncounters(g2d, renderEncounters);
+        if (includeKillEffects) {
+            enemyKillEffects.draw(g2d, 0, 0, worldWidth, worldHeight);
+        }
+        drawSoul(g2d, (int) Math.round(renderPlayerX), (int) Math.round(renderPlayerY), PLAYER_SIZE, YELLOW);
 
         g2d.translate(cameraX - ROOM_X, cameraY - ROOM_Y);
         g2d.setClip(oldClip);
     }
 
     private void drawDungeonRadioCarousel(Graphics2D g2d) {
-        double eased = easeOutCubic(radioRevealProgress);
-        int travelDistance = ROOM_H + 140;
+        double eased = radioClosing
+                ? 1.0 - easeOutCubic(1.0 - radioRevealProgress)
+                : easeOutCubic(radioRevealProgress);
+        int travelDistance = ROOM_H + 220;
         int dungeonOffsetY = -(int) Math.round(travelDistance * eased);
         int radioOffsetY = travelDistance - (int) Math.round(travelDistance * eased);
+        double outgoingScale = 1.0 + (0.11 * Math.min(1.0, radioRevealProgress / 0.42));
+        double incomingScale = 1.16 - (0.16 * eased);
+        int roomCenterX = ROOM_X + (ROOM_W / 2);
+        int roomCenterY = ROOM_Y + (ROOM_H / 2);
 
         Graphics2D dungeonG = (Graphics2D) g2d.create();
-        dungeonG.translate(0, dungeonOffsetY);
+        dungeonG.translate(roomCenterX, roomCenterY + dungeonOffsetY);
+        dungeonG.scale(outgoingScale, outgoingScale);
+        dungeonG.translate(-roomCenterX, -roomCenterY);
         drawDungeon(dungeonG);
         dungeonG.dispose();
 
         Graphics2D radioG = (Graphics2D) g2d.create();
         radioG.translate(0, radioOffsetY);
-        drawRadioWindow(radioG);
+        drawRadioWindow(radioG, incomingScale);
         radioG.dispose();
     }
 
     private void drawRadioWindow(Graphics2D g2d) {
-        int radioViewportX = 24;
-        int radioViewportY = 64;
-        int radioViewportW = GameConfig.WIDTH - 48;
-        int radioViewportH = GameConfig.HEIGHT - 108;
+        drawRadioWindow(g2d, 1.0);
+    }
+
+    private void drawRadioWindow(Graphics2D g2d, double transitionScale) {
+        int radioViewportX = RADIO_VIEWPORT_X;
+        int radioViewportY = RADIO_VIEWPORT_Y;
+        int radioViewportW = RADIO_VIEWPORT_W;
+        int radioViewportH = RADIO_VIEWPORT_H;
 
         Shape oldClip = g2d.getClip();
         g2d.clipRect(radioViewportX, radioViewportY, radioViewportW, radioViewportH);
 
-        double scale = Math.min(radioViewportW / (double) GameConfig.WIDTH, radioViewportH / (double) GameConfig.HEIGHT) * 0.98;
+        double fitScale = Math.min(radioViewportW / (double) GameConfig.WIDTH, radioViewportH / (double) GameConfig.HEIGHT);
+        double scale = fitScale * RADIO_ART_DISPLAY_ZOOM * transitionScale;
         int drawWidth = Math.max(1, (int) Math.round(GameConfig.WIDTH * scale));
         int drawHeight = Math.max(1, (int) Math.round(GameConfig.HEIGHT * scale));
         int drawX = radioViewportX + ((radioViewportW - drawWidth) / 2);
@@ -1469,32 +1514,27 @@ public class GamePanel extends JPanel {
         g2d.setClip(oldClip);
     }
 
-    private void drawEnemyKillEffects(Graphics2D g2d) {
-        enemyKillEffects.draw(g2d, 0, 0, roomWorldWidth, roomWorldHeight);
-    }
-
-    private void drawDungeonWorldBackdrop(Graphics2D g2d) {
-        if (roomWalkableArea == null || roomWalkableArea.isEmpty()) {
+    private void drawDungeonWorldBackdrop(Graphics2D g2d, Area walkableArea) {
+        if (walkableArea == null || walkableArea.isEmpty()) {
             return;
         }
 
         g2d.setColor(new Color(74, 244, 255, 26));
-        g2d.fill(roomWalkableArea);
+        g2d.fill(walkableArea);
 
         g2d.setColor(new Color(74, 244, 255, 220));
-        g2d.draw(roomWalkableArea);
+        g2d.draw(walkableArea);
     }
 
-    private void drawDungeonWorldDoor(Graphics2D g2d) {
-        Rectangle door = getDoorRect();
-        g2d.setColor(allEncountersCleared() ? GREEN : new Color(34, 74, 128));
+    private void drawDungeonWorldDoor(Graphics2D g2d, Rectangle door, List<EncounterNode> encounters) {
+        g2d.setColor(allEncountersCleared(encounters) ? GREEN : new Color(34, 74, 128));
         g2d.fillRect(door.x, door.y, door.width, door.height);
         g2d.setColor(WHITE);
         g2d.drawRect(door.x, door.y, door.width, door.height);
     }
 
-    private void drawDungeonWorldEncounters(Graphics2D g2d) {
-        for (EncounterNode node : roomEncounters) {
+    private void drawDungeonWorldEncounters(Graphics2D g2d, List<EncounterNode> encounters) {
+        for (EncounterNode node : encounters) {
             if (node.isEncounter() && node.isCleared()) {
                 continue;
             }
@@ -2324,7 +2364,6 @@ public class GamePanel extends JPanel {
                 if (id == KeyEvent.KEY_PRESSED) {
                     if (screen == ScreenState.DUNGEON
                             && !encounterTransitionActive
-                            && !roomTransitionActive
                             && !roomIntroActive
                             && !menuTransitionActive) {
                         synchronized (stateLock) {
@@ -2763,8 +2802,9 @@ public class GamePanel extends JPanel {
     }
 
     private void startRoomTransition(Direction exitedDir) {
-        clearMovementInput();
         backdropEffects.clearHueSweeps();
+        roomTransitionPreviousState = captureCurrentRoomState();
+        prepareNextRoomForTransition(exitedDir);
         roomTransitionActive = true;
         roomTransitionStartMs = System.currentTimeMillis();
         roomIntroActive = false;
@@ -2775,8 +2815,25 @@ public class GamePanel extends JPanel {
     }
 
     private void completeRoomTransition() {
+        roomTransitionPreviousState = null;
         Direction exitedDir = pendingRoomEntryDirection;
         pendingRoomEntryDirection = null;
+        roomIntroDirection = exitedDir;
+    }
+
+    private RoomRenderState captureCurrentRoomState() {
+        return new RoomRenderState(
+                roomWorldWidth,
+                roomWorldHeight,
+                playerX,
+                playerY,
+                doorDirection,
+                roomWalkableArea == null ? new Area() : new Area(roomWalkableArea),
+                new ArrayList<>(roomEncounters)
+        );
+    }
+
+    private void prepareNextRoomForTransition(Direction exitedDir) {
         if (exitedDir == null) {
             return;
         }
@@ -2813,6 +2870,7 @@ public class GamePanel extends JPanel {
         }
         if (progressAfter > progressBefore) {
             controllerInputManager.rumble(KEY_SUCCESS_RUMBLE_STRENGTH, KEY_SUCCESS_RUMBLE_MS);
+            backdropEffects.triggerPinkWaveHitPulse();
             int pendingDamageAfter = roundManager.getPendingDamage();
             registerInitialSurgeDamage(Math.max(0, pendingDamageAfter - pendingDamageBefore));
             addHealthDrainRelief();
@@ -3218,7 +3276,16 @@ public class GamePanel extends JPanel {
     }
 
     private boolean allEncountersCleared() {
-        return countUnclearedEncounters() == 0;
+        return allEncountersCleared(roomEncounters);
+    }
+
+    private boolean allEncountersCleared(List<EncounterNode> encounters) {
+        for (EncounterNode node : encounters) {
+            if (node.isEncounter() && !node.isCleared()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private EncounterEnemy getActiveEncounterEnemy() {
@@ -3271,29 +3338,33 @@ public class GamePanel extends JPanel {
     }
 
     private Rectangle getDoorRect() {
+        return getDoorRect(doorDirection, roomWorldWidth, roomWorldHeight);
+    }
+
+    private Rectangle getDoorRect(Direction renderDoorDirection, int worldWidth, int worldHeight) {
         int x;
         int y;
 
-        switch (doorDirection) {
+        switch (renderDoorDirection) {
             case UP:
-                x = (roomWorldWidth - DOOR_H) / 2;
+                x = (worldWidth - DOOR_H) / 2;
                 y = 0;
                 return new Rectangle(x, y, DOOR_H, DOOR_W);
 
             case DOWN:
-                x = (roomWorldWidth - DOOR_H) / 2;
-                y = roomWorldHeight - DOOR_W;
+                x = (worldWidth - DOOR_H) / 2;
+                y = worldHeight - DOOR_W;
                 return new Rectangle(x, y, DOOR_H, DOOR_W);
 
             case LEFT:
                 x = 0;
-                y = (roomWorldHeight - DOOR_H) / 2;
+                y = (worldHeight - DOOR_H) / 2;
                 return new Rectangle(x, y, DOOR_W, DOOR_H);
 
             case RIGHT:
             default:
-                x = roomWorldWidth - DOOR_W;
-                y = (roomWorldHeight - DOOR_H) / 2;
+                x = worldWidth - DOOR_W;
+                y = (worldHeight - DOOR_H) / 2;
                 return new Rectangle(x, y, DOOR_W, DOOR_H);
         }
     }
@@ -3363,15 +3434,23 @@ public class GamePanel extends JPanel {
     }
 
     private int getCameraX() {
+        return getCameraX(playerX, roomWorldWidth);
+    }
+
+    private int getCameraX(double renderPlayerX, int worldWidth) {
         int preferredPlayerScreenX = (ROOM_W - PLAYER_SIZE) / 2;
-        double target = playerX - preferredPlayerScreenX;
-        return clampInt((int) Math.round(target), 0, Math.max(0, roomWorldWidth - ROOM_W));
+        double target = renderPlayerX - preferredPlayerScreenX;
+        return clampInt((int) Math.round(target), 0, Math.max(0, worldWidth - ROOM_W));
     }
 
     private int getCameraY() {
+        return getCameraY(playerY, roomWorldHeight);
+    }
+
+    private int getCameraY(double renderPlayerY, int worldHeight) {
         int preferredPlayerScreenY = (ROOM_H - PLAYER_SIZE) / 2;
-        double target = playerY - preferredPlayerScreenY;
-        return clampInt((int) Math.round(target), 0, Math.max(0, roomWorldHeight - ROOM_H));
+        double target = renderPlayerY - preferredPlayerScreenY;
+        return clampInt((int) Math.round(target), 0, Math.max(0, worldHeight - ROOM_H));
     }
 
     private void setMovementHeld(Direction direction, boolean held) {
@@ -3820,7 +3899,6 @@ public class GamePanel extends JPanel {
 
     private void loadMenuSprites() {
         startMenuSprite = GameImageLoader.loadImage(getClass(), "START.png");
-        titleSplashSprite = GameImageLoader.loadImage(getClass(), "title_splash.png");
         openingTextSprite = GameImageLoader.loadImage(getClass(), "opening_text.png");
         radioOverlaySprite = GameImageLoader.loadImage(getClass(), "radio.png");
         openingStaticGif = GameImageLoader.loadAnimatedImage(getClass(), "startup_static.gif");
@@ -3990,12 +4068,12 @@ public class GamePanel extends JPanel {
     }
 
     private void drawRoomTransition(Graphics2D g2d) {
-        drawDirectionalRoomTransition(
+        drawDirectionalRoomBoxTransition(
                 g2d,
                 roomTransitionStartMs,
                 ROOM_TRANSITION_MS,
                 ROOM_TRANSITION_HOLD_MS,
-                "NEXT ROOM",
+                "ADVANCING",
                 pendingRoomEntryDirection
         );
     }
@@ -4082,6 +4160,79 @@ public class GamePanel extends JPanel {
         );
     }
 
+    private void drawDirectionalRoomBoxTransition(
+            Graphics2D g2d,
+            long startMs,
+            long transitionMs,
+            long holdMs,
+            String text,
+            Direction direction
+    ) {
+        if (roomTransitionPreviousState == null) {
+            drawDungeon(g2d);
+            return;
+        }
+
+        long elapsedMs = System.currentTimeMillis() - startMs;
+        double totalProgress = elapsedMs / (double) (transitionMs + holdMs);
+        totalProgress = Math.max(0.0, Math.min(1.0, totalProgress));
+
+        if (direction == null) {
+            direction = Direction.RIGHT;
+        }
+
+        double slideProgress = elapsedMs / (double) Math.max(1L, transitionMs);
+        slideProgress = Math.max(0.0, Math.min(1.0, slideProgress));
+        double eased = easeOutCubic(slideProgress);
+        int travelX = GameConfig.WIDTH + 32;
+        int travelY = GameConfig.HEIGHT + 32;
+        double outgoingScale = 1.0 + (0.11 * Math.min(1.0, slideProgress / 0.42));
+        double incomingScale = 1.12 - (0.12 * eased);
+
+        int oldOffsetX = 0;
+        int oldOffsetY = 0;
+        int newOffsetX = 0;
+        int newOffsetY = 0;
+        switch (direction) {
+            case LEFT:
+                oldOffsetX = (int) Math.round(travelX * eased);
+                newOffsetX = oldOffsetX - travelX;
+                break;
+            case RIGHT:
+                oldOffsetX = -(int) Math.round(travelX * eased);
+                newOffsetX = oldOffsetX + travelX;
+                break;
+            case UP:
+                oldOffsetY = (int) Math.round(travelY * eased);
+                newOffsetY = oldOffsetY - travelY;
+                break;
+            case DOWN:
+                oldOffsetY = -(int) Math.round(travelY * eased);
+                newOffsetY = oldOffsetY + travelY;
+                break;
+            default:
+                break;
+        }
+
+        drawScaledDungeon(g2d, roomTransitionPreviousState, oldOffsetX, oldOffsetY, outgoingScale);
+        drawScaledDungeon(g2d, null, newOffsetX, newOffsetY, incomingScale);
+    }
+
+    private void drawScaledDungeon(Graphics2D g2d, RoomRenderState state, int offsetX, int offsetY, double scale) {
+        int centerX = ROOM_X + (ROOM_W / 2);
+        int centerY = ROOM_Y + (ROOM_H / 2);
+        Graphics2D roomG = (Graphics2D) g2d.create();
+        roomG.translate(offsetX + centerX, offsetY + centerY);
+        roomG.scale(scale, scale);
+        roomG.translate(-centerX, -centerY);
+        if (state == null) {
+            drawDungeon(roomG);
+        } else {
+            drawDungeon(roomG, state);
+        }
+        roomG.dispose();
+    }
+
     private void drawHorizontalShutterTransition(
             Graphics2D g2d,
             long startMs,
@@ -4158,7 +4309,19 @@ public class GamePanel extends JPanel {
     }
 
     private void drawRoomIntro(Graphics2D g2d) {
-        drawTransitionIntro(g2d, roomIntroStartMs, ROOM_INTRO_MS, "", null);
+        double progress = (System.currentTimeMillis() - roomIntroStartMs) / (double) ROOM_INTRO_MS;
+        progress = Math.max(0.0, Math.min(1.0, progress));
+
+        int overlayAlpha = (int) Math.round(110 * (1.0 - progress));
+        if (overlayAlpha <= 0) {
+            return;
+        }
+
+        Shape oldClip = g2d.getClip();
+        g2d.clipRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
+        g2d.setColor(new Color(ROOM_GLASS.getRed(), ROOM_GLASS.getGreen(), ROOM_GLASS.getBlue(), overlayAlpha));
+        g2d.fillRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
+        g2d.setClip(oldClip);
     }
 
     private void drawTransitionIntro(Graphics2D g2d, long startMs, long introMs, String text, EncounterEnemy encounterEnemy) {
