@@ -197,6 +197,15 @@ public class RoundManager {
         lastTimerUpdateMs = now;
     }
 
+    public void resumeForPlayerControl() {
+        long now = System.currentTimeMillis();
+        sequenceStartTimeMs = now;
+        lastTimerUpdateMs = now;
+        timerPauseUntilMs = 0L;
+        lastCorrectInputTimeMs = 0L;
+        lastCorrectCadenceMs = 0L;
+    }
+
     private void startNewSequence() {
         sequence.clear();
         int sequenceLength = random.nextInt(maxSequenceLength - minSequenceLength + 1) + minSequenceLength;

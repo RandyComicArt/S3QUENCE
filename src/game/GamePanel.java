@@ -59,6 +59,8 @@ public class GamePanel extends JPanel {
     private static final Stroke STROKE_1 = new BasicStroke(1f);
     private static final Stroke STROKE_5 = new BasicStroke(5f);
     private static final Color DUNGEON_FRAME_PINK = new Color(255, 122, 200);
+    private static final Color DUNGEON_FRAME_YELLOW = new Color(255, 232, 95);
+    private static final Color EDGE_ANCHOR_BLUE = new Color(178, 240, 255);
     private static final Color HUD_LINE_WHITE = new Color(255, 255, 255, 210);
     private static final Color HUD_LINE_WHITE_DIM = new Color(255, 255, 255, 70);
     private static final int LEVEL_UP_CHOICE_COUNT = 3;
@@ -385,7 +387,8 @@ public class GamePanel extends JPanel {
 
         gameG.setColor(BG);
         gameG.fillRect(0, 0, gameWidth, gameHeight);
-        backdropEffects.drawBackdrop(gameG, screen, game.model.TimerStyle.BACKDROP_HUE, getEncounterTimerProgress());
+        ScreenState backdropScreen = encounterTransitionActive ? ScreenState.ENCOUNTER : screen;
+        backdropEffects.drawBackdrop(gameG, backdropScreen, game.model.TimerStyle.BACKDROP_HUE, getEncounterTimerProgress());
 
         if (screen == ScreenState.OPENING) {
             drawOpeningSplash(gameG);
@@ -416,6 +419,8 @@ public class GamePanel extends JPanel {
                 drawDungeonRadioCarousel(gameG);
             } else if (roomTransitionActive) {
                 // Room transition renders both the outgoing and incoming rooms itself.
+            } else if (encounterTransitionActive) {
+                // Encounter transition expands the dungeon panel itself.
             } else {
                 drawDungeon(gameG);
             }
@@ -423,12 +428,7 @@ public class GamePanel extends JPanel {
                 drawEncounterBestedTransition(gameG);
             }
         } else {
-            drawArena(gameG);
-            if (roundManager.getActiveArchetype().isRhythmMode()) {
-                drawRhythmEncounter(gameG);
-            } else {
-                drawSequence(gameG);
-            }
+            drawEncounterGameplay(gameG);
         }
 
         if (screen == ScreenState.LOST) {
@@ -472,15 +472,12 @@ public class GamePanel extends JPanel {
                 long elapsedMs = System.currentTimeMillis() - encounterTransitionStartMs;
                 if (elapsedMs >= ENCOUNTER_TRANSITION_MS + ENCOUNTER_TRANSITION_HOLD_MS) {
                     encounterTransitionActive = false;
-                    activeEncounterIndex = pendingEncounterIndex;
                     pendingEncounterIndex = -1;
-                    long encounterBonusMs = nextEncounterTimeBonusMs;
-                    nextEncounterTimeBonusMs = 0L;
-                    roundManager.startGame(false, encounterBonusMs);
+                    roundManager.resumeForPlayerControl();
                     resetTimerBarAnimation();
                     screen = ScreenState.ENCOUNTER;
-                    encounterIntroActive = true;
-                    encounterIntroStartMs = System.currentTimeMillis();
+                    encounterIntroActive = false;
+                    encounterIntroStartMs = 0L;
                 }
             }
             if (encounterBestedTransitionActive) {
@@ -1417,11 +1414,11 @@ public class GamePanel extends JPanel {
     }
 
     private void drawDungeon(Graphics2D g2d) {
-        drawDungeon(g2d, roomWorldWidth, roomWorldHeight, playerX, playerY, doorDirection, roomWalkableArea, roomEncounters, true);
+        drawDungeon(g2d, roomWorldWidth, roomWorldHeight, playerX, playerY, doorDirection, roomWalkableArea, roomEncounters, true, true);
     }
 
     private void drawDungeon(Graphics2D g2d, RoomRenderState state) {
-        drawDungeon(g2d, state.worldWidth, state.worldHeight, state.playerX, state.playerY, state.doorDirection, state.walkableArea, state.encounters, false);
+        drawDungeon(g2d, state.worldWidth, state.worldHeight, state.playerX, state.playerY, state.doorDirection, state.walkableArea, state.encounters, false, true);
     }
 
     private void drawDungeon(
@@ -1433,11 +1430,12 @@ public class GamePanel extends JPanel {
             Direction renderDoorDirection,
             Area renderWalkableArea,
             List<EncounterNode> renderEncounters,
-            boolean includeKillEffects
+            boolean includeKillEffects,
+            boolean drawRoomFrame
     ) {
         g2d.setColor(ROOM_GLASS);
         g2d.fillRect(ROOM_X + 2, ROOM_Y + 2, ROOM_W - 3, ROOM_H - 3);
-        drawFrame(g2d, ROOM_X, ROOM_Y, ROOM_W, ROOM_H, 2, DUNGEON_FRAME_PINK);
+        drawEdgeAnchors(g2d, ROOM_X, ROOM_Y, ROOM_W, ROOM_H, EDGE_ANCHOR_BLUE, 112);
 
         Shape oldClip = g2d.getClip();
         g2d.clipRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
@@ -1548,6 +1546,16 @@ public class GamePanel extends JPanel {
     private void drawArena(Graphics2D g2d) {
         int encounterArenaY = ENCOUNTER_ARENA_Y;
         drawEncounterEnemyBar(g2d, encounterArenaY);
+    }
+
+    private void drawEncounterGameplay(Graphics2D g2d) {
+        drawArena(g2d);
+        if (roundManager.getActiveArchetype().isRhythmMode()) {
+            drawRhythmEncounter(g2d);
+        } else {
+            drawSequence(g2d);
+        }
+        drawEdgeAnchors(g2d, 0, 0, GameConfig.WIDTH, GameConfig.HEIGHT, EDGE_ANCHOR_BLUE, 92);
     }
 
     private void drawEncounterEnemyBar(Graphics2D g2d, int encounterArenaY) {
@@ -2009,7 +2017,7 @@ public class GamePanel extends JPanel {
         int y = ENCOUNTER_ARENA_Y + (ARENA_H - SEQUENCE_SYMBOL_SIZE) / 2 + 52;
         drawSequencePunchSprite(g2d, y);
         Composite oldComposite = g2d.getComposite();
-        if (timeoutRecoveryActive) {
+        if (timeoutRecoveryActive || encounterTransitionActive) {
             g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.46f));
         }
         boolean wrongFlash = roundManager.isWrongFlashActive();
@@ -2794,6 +2802,12 @@ public class GamePanel extends JPanel {
         EncounterEnemy enemy = roomEncounters.get(encounterIndex).getEnemy();
         encounterMusicFile = getEncounterMusicFile(enemy.getArchetype());
         roundManager.configureEncounter(enemy.getArchetype());
+        activeEncounterIndex = encounterIndex;
+        long encounterBonusMs = nextEncounterTimeBonusMs;
+        nextEncounterTimeBonusMs = 0L;
+        roundManager.startGame(false, encounterBonusMs);
+        roundManager.pauseTimer(ENCOUNTER_TRANSITION_MS + ENCOUNTER_TRANSITION_HOLD_MS + 160L);
+        resetTimerBarAnimation();
         AudioManager.playSfx("encounter_start.wav");
         controllerInputManager.rumble(ENEMY_TOUCH_RUMBLE_STRENGTH, ENEMY_TOUCH_RUMBLE_MS);
         pendingEncounterIndex = encounterIndex;
@@ -3519,6 +3533,15 @@ public class GamePanel extends JPanel {
     }
 
     private void updateTimerBarAnimation(double deltaSeconds) {
+        if (encounterTransitionActive) {
+            long duration = Math.max(1L, roundManager.getRoundDurationMs());
+            long transitionDuration = Math.max(1L, ENCOUNTER_TRANSITION_MS + ENCOUNTER_TRANSITION_HOLD_MS);
+            double progress = (System.currentTimeMillis() - encounterTransitionStartMs) / (double) transitionDuration;
+            double fillProgress = easeInOut(progress);
+            displayedTimerDurationMs = duration;
+            displayedTimerMs = Math.round(duration * fillProgress);
+            return;
+        }
         if (screen != ScreenState.ENCOUNTER) {
             clearTimerBarAnimation();
             return;
@@ -4038,8 +4061,211 @@ public class GamePanel extends JPanel {
         g2d.setStroke(old);
     }
 
+    private void drawEdgeAnchors(Graphics2D g2d, int x, int y, int w, int h, Color color, int alpha) {
+        if (w <= 24 || h <= 24 || alpha <= 0) {
+            return;
+        }
+
+        Stroke oldStroke = g2d.getStroke();
+        g2d.setStroke(new BasicStroke(2f, BasicStroke.CAP_SQUARE, BasicStroke.JOIN_MITER));
+        g2d.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), clampInt(alpha, 0, 255)));
+
+        int inset = 14;
+        int longMark = 38;
+        int shortMark = 16;
+        int left = x + inset;
+        int right = x + w - inset;
+        int top = y + inset;
+        int bottom = y + h - inset;
+
+        g2d.drawLine(left, top, left + longMark, top);
+        g2d.drawLine(left, top, left, top + shortMark);
+        g2d.drawLine(right, top, right - longMark, top);
+        g2d.drawLine(right, top, right, top + shortMark);
+        g2d.drawLine(left, bottom, left + longMark, bottom);
+        g2d.drawLine(left, bottom, left, bottom - shortMark);
+        g2d.drawLine(right, bottom, right - longMark, bottom);
+        g2d.drawLine(right, bottom, right, bottom - shortMark);
+
+        int tickAlpha = clampInt(alpha / 2, 0, 255);
+        g2d.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), tickAlpha));
+        int centerX = x + (w / 2);
+        int centerY = y + (h / 2);
+        g2d.drawLine(centerX - 11, top, centerX + 11, top);
+        g2d.drawLine(centerX - 11, bottom, centerX + 11, bottom);
+        g2d.drawLine(left, centerY - 11, left, centerY + 11);
+        g2d.drawLine(right, centerY - 11, right, centerY + 11);
+
+        g2d.setStroke(oldStroke);
+    }
+
     private void drawEncounterTransition(Graphics2D g2d) {
-        drawEncounterEnemySlide(g2d, encounterTransitionStartMs, ENCOUNTER_TRANSITION_MS, ENCOUNTER_TRANSITION_HOLD_MS, getPendingEncounterEnemy());
+        drawDungeonToEncounterExpansion(g2d);
+    }
+
+    private void drawDungeonToEncounterExpansion(Graphics2D g2d) {
+        long elapsedMs = System.currentTimeMillis() - encounterTransitionStartMs;
+        double progress = elapsedMs / (double) Math.max(1L, ENCOUNTER_TRANSITION_MS);
+        progress = Math.max(0.0, Math.min(1.0, progress));
+
+        double expandProgress = Math.max(0.0, Math.min(1.0, (progress - 0.14) / 0.86));
+        double eased = easeOutCubic(expandProgress);
+        int contentX = (int) Math.round(ROOM_X * (1.0 - eased));
+        int contentY = (int) Math.round(ROOM_Y * (1.0 - eased));
+        int contentW = (int) Math.round(ROOM_W + ((GameConfig.WIDTH - ROOM_W) * eased));
+        int contentH = (int) Math.round(ROOM_H + ((GameConfig.HEIGHT - ROOM_H) * eased));
+        int frameX = contentX;
+        int frameY = contentY;
+        int frameW = contentW;
+        int frameH = contentH;
+
+        drawEncounterExpansionAtmosphere(g2d, progress, frameX, frameY, frameW, frameH);
+
+        Shape oldClip = g2d.getClip();
+        g2d.clipRect(contentX, contentY, contentW, contentH);
+
+        double dungeonFadeProgress = Math.max(0.0, Math.min(1.0, (progress - 0.34) / 0.34));
+        float dungeonAlpha = (float) (1.0 - easeOutCubic(dungeonFadeProgress));
+        Graphics2D dungeonG = (Graphics2D) g2d.create(contentX, contentY, contentW, contentH);
+        dungeonG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        dungeonG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+        dungeonG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        dungeonG.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, dungeonAlpha));
+        dungeonG.scale(contentW / (double) ROOM_W, contentH / (double) ROOM_H);
+        dungeonG.translate(-ROOM_X, -ROOM_Y);
+        drawDungeon(dungeonG, roomWorldWidth, roomWorldHeight, playerX, playerY, doorDirection, roomWalkableArea, roomEncounters, true, false);
+        dungeonG.dispose();
+
+        double revealProgress = Math.max(0.0, Math.min(1.0, (progress - 0.48) / 0.42));
+        if (revealProgress > 0.0) {
+            Composite oldComposite = g2d.getComposite();
+            float alpha = (float) easeOutCubic(revealProgress);
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+            Graphics2D encounterG = (Graphics2D) g2d.create(contentX, contentY, contentW, contentH);
+            encounterG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+            encounterG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+            encounterG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            encounterG.scale(contentW / (double) GameConfig.WIDTH, contentH / (double) GameConfig.HEIGHT);
+            drawEncounterGameplay(encounterG);
+            encounterG.dispose();
+            g2d.setComposite(oldComposite);
+        }
+
+        g2d.setClip(oldClip);
+
+        int pulseAlpha = clampInt((int) Math.round(155 * (1.0 - Math.min(1.0, progress / 0.28))), 0, 155);
+        if (pulseAlpha > 0) {
+            g2d.setColor(new Color(255, 255, 255, pulseAlpha));
+            g2d.fillRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
+        }
+
+        drawEncounterExpansionFrame(g2d, frameX, frameY, frameW, frameH, 0, progress);
+    }
+
+    private void drawEncounterExpansionAtmosphere(Graphics2D g2d, double progress, int x, int y, int w, int h) {
+        double impact = 1.0 - Math.max(0.0, Math.min(1.0, progress / 0.32));
+        int bloomAlpha = clampInt((int) Math.round(70 * impact), 0, 70);
+        if (bloomAlpha > 0) {
+            g2d.setColor(new Color(255, 255, 255, bloomAlpha));
+            g2d.fillRect(x - 10, y - 10, w + 20, h + 20);
+        }
+
+        double streakWindow = Math.sin(Math.max(0.0, Math.min(1.0, progress / 0.72)) * Math.PI);
+        int streakAlpha = clampInt((int) Math.round(58 * streakWindow), 0, 58);
+        if (streakAlpha <= 0) {
+            return;
+        }
+
+        Stroke oldStroke = g2d.getStroke();
+        g2d.setStroke(STROKE_1);
+        for (int i = 0; i < 7; i++) {
+            int laneY = y + 18 + (i * Math.max(16, h / 8));
+            int offset = (int) Math.round((progress * 86) + (i * 19));
+            int startX = x - 38 + (offset % 54);
+            int endX = Math.min(x + w + 38, startX + 42 + (i % 3) * 14);
+            g2d.setColor(new Color(80, 228, 255, Math.max(0, streakAlpha - (i * 5))));
+            g2d.drawLine(startX, laneY, endX, laneY - 7);
+        }
+        g2d.setStroke(oldStroke);
+    }
+
+    private void drawEncounterExpansionFrame(Graphics2D g2d, int x, int y, int w, int h, int alpha, double progress) {
+        Stroke oldStroke = g2d.getStroke();
+        int smear = 1 + (int) Math.round(5 * Math.sin(Math.max(0.0, Math.min(1.0, progress / 0.55)) * Math.PI));
+        int ghostAlpha = clampInt((int) Math.round(alpha * 0.28), 0, 72);
+        Color transitionColor = lerpColor(DUNGEON_FRAME_YELLOW, DUNGEON_FRAME_PINK, easeInOut(progress));
+        Color borderColor = new Color(transitionColor.getRed(), transitionColor.getGreen(), transitionColor.getBlue(), alpha);
+
+        if (ghostAlpha > 0) {
+            g2d.setStroke(STROKE_1);
+            g2d.setColor(new Color(80, 228, 255, ghostAlpha));
+            g2d.drawRect(x - smear, y, w, h);
+            g2d.setColor(new Color(255, 58, 98, ghostAlpha));
+            g2d.drawRect(x + smear, y, w, h);
+        }
+
+        drawEncounterEdgeFrame(g2d, x, y, w, h, borderColor);
+        g2d.setStroke(oldStroke);
+    }
+
+    private void drawEncounterScreenFrame(Graphics2D g2d, int alpha) {
+        drawEncounterEdgeFrame(
+                g2d,
+                0,
+                0,
+                GameConfig.WIDTH,
+                GameConfig.HEIGHT,
+                new Color(DUNGEON_FRAME_PINK.getRed(), DUNGEON_FRAME_PINK.getGreen(), DUNGEON_FRAME_PINK.getBlue(), alpha)
+        );
+    }
+
+    private void drawEncounterEdgeFrame(Graphics2D g2d, int x, int y, int w, int h, Color color) {
+        if (w <= 2 || h <= 2) {
+            return;
+        }
+
+        Stroke oldStroke = g2d.getStroke();
+        int glowAlpha = Math.min(72, Math.max(0, color.getAlpha() / 4));
+        int coreAlpha = Math.min(205, Math.max(0, color.getAlpha()));
+
+        g2d.setStroke(new BasicStroke(4f));
+        g2d.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), glowAlpha));
+        g2d.drawRect(x, y, w, h);
+
+        g2d.setStroke(STROKE_1);
+        g2d.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), coreAlpha));
+        g2d.drawRect(x, y, w, h);
+        g2d.setStroke(oldStroke);
+    }
+
+    private void drawEncounterTransitionLabel(Graphics2D g2d, int x, int y, int width, int height, double progress) {
+        double labelIn = Math.max(0.0, Math.min(1.0, progress / 0.22));
+        double labelOut = 1.0 - Math.max(0.0, Math.min(1.0, (progress - 0.52) / 0.24));
+        int alpha = clampInt((int) Math.round(255 * easeOutCubic(labelIn) * labelOut), 0, 255);
+        if (alpha <= 0) {
+            return;
+        }
+
+        g2d.setFont(TRANSITION_ENEMY_FONT);
+        FontMetrics metrics = g2d.getFontMetrics();
+        int centerX = x + (width / 2);
+        int centerY = y + (height / 2);
+        int baselineY = centerY - (metrics.getHeight() / 2) + metrics.getAscent();
+
+        int pulseAlpha = clampInt((int) Math.round(110 * Math.sin(Math.min(1.0, progress / 0.32) * Math.PI)), 0, 110);
+        if (pulseAlpha > 0) {
+            g2d.setColor(new Color(RED.getRed(), RED.getGreen(), RED.getBlue(), pulseAlpha));
+            g2d.fillRect(x, y, width, height);
+        }
+
+        drawGlowingCenteredString(
+                g2d,
+                "ENCOUNTER",
+                centerX,
+                baselineY,
+                new Color(RED.getRed(), RED.getGreen(), RED.getBlue(), alpha),
+                new Color(RED.getRed(), RED.getGreen(), RED.getBlue(), Math.max(20, alpha / 2))
+        );
     }
 
     private void drawEncounterBestedTransition(Graphics2D g2d) {
