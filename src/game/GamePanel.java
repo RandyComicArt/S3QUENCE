@@ -199,6 +199,7 @@ public class GamePanel extends JPanel {
     private int sceneBufferWidth = RENDER_QUALITY_WIDTHS[DEFAULT_RENDER_QUALITY_INDEX];
     private int sceneBufferHeight = RENDER_QUALITY_HEIGHTS[DEFAULT_RENDER_QUALITY_INDEX];
     private int renderQualityIndex = DEFAULT_RENDER_QUALITY_INDEX;
+    private boolean crtModeEnabled = true;
     private boolean crtBleedEnabled = DEFAULT_CRT_COLOR_BLEED;
     private boolean crtScanlinesEnabled = true;
     private int crtBrightnessIndex = DEFAULT_BRIGHTNESS_INDEX;
@@ -371,10 +372,14 @@ public class GamePanel extends JPanel {
             renderGameScene(sceneG);
             sceneG.dispose();
 
-            crtDisplay.ensureGeometry(renderWidth, renderHeight);
-            crtDisplay.drawCurvedScreenImage(gameG, sceneBuffer, renderWidth, renderHeight, crtBleedEnabled, crtBrightnessGain);
-            crtDisplay.applyOverlay(gameG, renderWidth, renderHeight, crtScanlinesEnabled);
-            crtDisplay.drawMatte(gameG, renderWidth, renderHeight);
+            if (crtModeEnabled) {
+                crtDisplay.ensureGeometry(renderWidth, renderHeight);
+                crtDisplay.drawCurvedScreenImage(gameG, sceneBuffer, renderWidth, renderHeight, crtBleedEnabled, crtBrightnessGain);
+                crtDisplay.applyOverlay(gameG, renderWidth, renderHeight, crtScanlinesEnabled);
+                crtDisplay.drawMatte(gameG, renderWidth, renderHeight);
+            } else {
+                gameG.drawImage(sceneBuffer, 0, 0, renderWidth, renderHeight, null);
+            }
 
             gameG.dispose();
             g2d.dispose();
@@ -387,7 +392,7 @@ public class GamePanel extends JPanel {
 
         gameG.setColor(BG);
         gameG.fillRect(0, 0, gameWidth, gameHeight);
-        ScreenState backdropScreen = encounterTransitionActive ? ScreenState.ENCOUNTER : screen;
+        ScreenState backdropScreen = getBackdropScreenForRender();
         backdropEffects.drawBackdrop(gameG, backdropScreen, game.model.TimerStyle.BACKDROP_HUE, getEncounterTimerProgress());
 
         if (screen == ScreenState.OPENING) {
@@ -644,6 +649,8 @@ public class GamePanel extends JPanel {
         lineY += settingsLineStep;
         if (settingsTabIndex == SETTINGS_TAB_VIDEO) {
             drawSettingsOption(g2d, SETTINGS_VIDEO_RENDER_QUALITY, "RENDER QUALITY", getRenderQualityLabel(), settingsLeft, lineY, alpha);
+            lineY += settingsLineStep;
+            drawSettingsOption(g2d, SETTINGS_VIDEO_CRT_MODE, "CRT MODE", getCrtModeLabel(), settingsLeft, lineY, alpha);
             lineY += settingsLineStep;
             drawSettingsBrightness(g2d, SETTINGS_VIDEO_CRT_BRIGHTNESS, settingsLeft, lineY, alpha);
             lineY += settingsLineStep + 20;
@@ -1191,6 +1198,10 @@ public class GamePanel extends JPanel {
         return ASPECT_MODE_LABELS[aspectModeIndex];
     }
 
+    private String getCrtModeLabel() {
+        return crtModeEnabled ? "ON" : "OFF";
+    }
+
     private String getEncounterMusicFile(EnemyArchetype archetype) {
         if (archetype == null) {
             return ENCOUNTER_MUSIC_FILES[0];
@@ -1349,6 +1360,9 @@ public class GamePanel extends JPanel {
             renderQualityIndex = wrapIndex(renderQualityIndex + delta, RENDER_QUALITY_LABELS.length);
             applyRenderQuality();
             AudioManager.playSfx("toggle_tab.wav");
+        } else if (settingsSelectionIndex == SETTINGS_VIDEO_CRT_MODE) {
+            crtModeEnabled = !crtModeEnabled;
+            AudioManager.playSfx("toggle_tab.wav");
         } else if (settingsSelectionIndex == SETTINGS_VIDEO_CRT_BRIGHTNESS) {
             crtBrightnessIndex = wrapIndex(crtBrightnessIndex + delta, CRT_BRIGHTNESS_LEVELS.length);
             crtBrightnessGain = CRT_BRIGHTNESS_LEVELS[crtBrightnessIndex];
@@ -1433,9 +1447,11 @@ public class GamePanel extends JPanel {
             boolean includeKillEffects,
             boolean drawRoomFrame
     ) {
-        g2d.setColor(ROOM_GLASS);
-        g2d.fillRect(ROOM_X + 2, ROOM_Y + 2, ROOM_W - 3, ROOM_H - 3);
-        drawEdgeAnchors(g2d, ROOM_X, ROOM_Y, ROOM_W, ROOM_H, EDGE_ANCHOR_BLUE, 112);
+        if (drawRoomFrame) {
+            g2d.setColor(ROOM_GLASS);
+            g2d.fillRect(ROOM_X + 2, ROOM_Y + 2, ROOM_W - 3, ROOM_H - 3);
+            drawEdgeAnchors(g2d, ROOM_X, ROOM_Y, ROOM_W, ROOM_H, EDGE_ANCHOR_BLUE, 112);
+        }
 
         Shape oldClip = g2d.getClip();
         g2d.clipRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
@@ -4103,17 +4119,24 @@ public class GamePanel extends JPanel {
         drawDungeonToEncounterExpansion(g2d);
     }
 
-    private void drawDungeonToEncounterExpansion(Graphics2D g2d) {
-        long elapsedMs = System.currentTimeMillis() - encounterTransitionStartMs;
-        double progress = elapsedMs / (double) Math.max(1L, ENCOUNTER_TRANSITION_MS);
-        progress = Math.max(0.0, Math.min(1.0, progress));
+    private ScreenState getBackdropScreenForRender() {
+        if (!encounterTransitionActive) {
+            return screen;
+        }
 
-        double expandProgress = Math.max(0.0, Math.min(1.0, (progress - 0.14) / 0.86));
-        double eased = easeOutCubic(expandProgress);
-        int contentX = (int) Math.round(ROOM_X * (1.0 - eased));
-        int contentY = (int) Math.round(ROOM_Y * (1.0 - eased));
-        int contentW = (int) Math.round(ROOM_W + ((GameConfig.WIDTH - ROOM_W) * eased));
-        int contentH = (int) Math.round(ROOM_H + ((GameConfig.HEIGHT - ROOM_H) * eased));
+        double progress = getEncounterTransitionProgress();
+        return progress >= 0.76 ? ScreenState.ENCOUNTER : screen;
+    }
+
+    private void drawDungeonToEncounterExpansion(Graphics2D g2d) {
+        double progress = getEncounterTransitionProgress();
+
+        double horizontalProgress = easeOutCubic(Math.max(0.0, Math.min(1.0, (progress - 0.08) / 0.58)));
+        double verticalProgress = easeOutCubic(Math.max(0.0, Math.min(1.0, (progress - 0.50) / 0.42)));
+        int contentX = (int) Math.round(ROOM_X * (1.0 - horizontalProgress));
+        int contentY = (int) Math.round(ROOM_Y * (1.0 - verticalProgress));
+        int contentW = (int) Math.round(ROOM_W + ((GameConfig.WIDTH - ROOM_W) * horizontalProgress));
+        int contentH = (int) Math.round(ROOM_H + ((GameConfig.HEIGHT - ROOM_H) * verticalProgress));
         int frameX = contentX;
         int frameY = contentY;
         int frameW = contentW;
@@ -4123,29 +4146,28 @@ public class GamePanel extends JPanel {
 
         Shape oldClip = g2d.getClip();
         g2d.clipRect(contentX, contentY, contentW, contentH);
+        g2d.setColor(ROOM_GLASS);
+        g2d.fillRect(contentX, contentY, contentW, contentH);
 
-        double dungeonFadeProgress = Math.max(0.0, Math.min(1.0, (progress - 0.34) / 0.34));
+        double dungeonFadeProgress = Math.max(0.0, Math.min(1.0, (progress - 0.58) / 0.24));
         float dungeonAlpha = (float) (1.0 - easeOutCubic(dungeonFadeProgress));
-        Graphics2D dungeonG = (Graphics2D) g2d.create(contentX, contentY, contentW, contentH);
+        Graphics2D dungeonG = (Graphics2D) g2d.create();
         dungeonG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
         dungeonG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
         dungeonG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
         dungeonG.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, dungeonAlpha));
-        dungeonG.scale(contentW / (double) ROOM_W, contentH / (double) ROOM_H);
-        dungeonG.translate(-ROOM_X, -ROOM_Y);
         drawDungeon(dungeonG, roomWorldWidth, roomWorldHeight, playerX, playerY, doorDirection, roomWalkableArea, roomEncounters, true, false);
         dungeonG.dispose();
 
-        double revealProgress = Math.max(0.0, Math.min(1.0, (progress - 0.48) / 0.42));
+        double revealProgress = Math.max(0.0, Math.min(1.0, (progress - 0.76) / 0.20));
         if (revealProgress > 0.0) {
             Composite oldComposite = g2d.getComposite();
             float alpha = (float) easeOutCubic(revealProgress);
             g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-            Graphics2D encounterG = (Graphics2D) g2d.create(contentX, contentY, contentW, contentH);
+            Graphics2D encounterG = (Graphics2D) g2d.create();
             encounterG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
             encounterG.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
             encounterG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-            encounterG.scale(contentW / (double) GameConfig.WIDTH, contentH / (double) GameConfig.HEIGHT);
             drawEncounterGameplay(encounterG);
             encounterG.dispose();
             g2d.setComposite(oldComposite);
@@ -4159,7 +4181,46 @@ public class GamePanel extends JPanel {
             g2d.fillRect(ROOM_X + 1, ROOM_Y + 1, ROOM_W - 2, ROOM_H - 2);
         }
 
+        drawEncounterRevealGuides(g2d, frameX, frameY, frameW, frameH, horizontalProgress, verticalProgress, revealProgress);
         drawEncounterExpansionFrame(g2d, frameX, frameY, frameW, frameH, 0, progress);
+    }
+
+    private double getEncounterTransitionProgress() {
+        long elapsedMs = System.currentTimeMillis() - encounterTransitionStartMs;
+        double progress = elapsedMs / (double) Math.max(1L, ENCOUNTER_TRANSITION_MS);
+        return Math.max(0.0, Math.min(1.0, progress));
+    }
+
+    private void drawEncounterRevealGuides(
+            Graphics2D g2d,
+            int x,
+            int y,
+            int w,
+            int h,
+            double horizontalProgress,
+            double verticalProgress,
+            double revealProgress
+    ) {
+        double fade = 1.0 - easeOutCubic(revealProgress);
+        int anchorAlpha = clampInt((int) Math.round((70 + (42 * Math.max(horizontalProgress, verticalProgress))) * fade), 0, 118);
+        drawEdgeAnchors(g2d, x, y, w, h, EDGE_ANCHOR_BLUE, anchorAlpha);
+
+        Stroke oldStroke = g2d.getStroke();
+        g2d.setStroke(STROKE_1);
+        int railAlpha = clampInt((int) Math.round(58 * (1.0 - Math.min(1.0, verticalProgress * 0.55)) * fade), 0, 58);
+        if (railAlpha > 0) {
+            g2d.setColor(new Color(EDGE_ANCHOR_BLUE.getRed(), EDGE_ANCHOR_BLUE.getGreen(), EDGE_ANCHOR_BLUE.getBlue(), railAlpha));
+            g2d.drawLine(x + 26, y + 1, x + Math.max(26, w - 26), y + 1);
+            g2d.drawLine(x + 26, y + h - 1, x + Math.max(26, w - 26), y + h - 1);
+        }
+
+        int verticalRailAlpha = clampInt((int) Math.round(46 * verticalProgress * fade), 0, 46);
+        if (verticalRailAlpha > 0) {
+            g2d.setColor(new Color(EDGE_ANCHOR_BLUE.getRed(), EDGE_ANCHOR_BLUE.getGreen(), EDGE_ANCHOR_BLUE.getBlue(), verticalRailAlpha));
+            g2d.drawLine(x + 1, y + 26, x + 1, y + Math.max(26, h - 26));
+            g2d.drawLine(x + w - 1, y + 26, x + w - 1, y + Math.max(26, h - 26));
+        }
+        g2d.setStroke(oldStroke);
     }
 
     private void drawEncounterExpansionAtmosphere(Graphics2D g2d, double progress, int x, int y, int w, int h) {

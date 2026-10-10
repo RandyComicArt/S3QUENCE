@@ -90,10 +90,11 @@ public final class GamePanelConstants {
     public static final int SETTINGS_TAB_AUDIO = 1;
     public static final int SETTINGS_ITEM_TAB = 0;
     public static final int SETTINGS_VIDEO_RENDER_QUALITY = 1;
-    public static final int SETTINGS_VIDEO_CRT_BRIGHTNESS = 2;
-    public static final int SETTINGS_VIDEO_ASPECT = 3;
-    public static final int SETTINGS_VIDEO_BACK = 4;
-    public static final int SETTINGS_VIDEO_ITEM_COUNT = 5;
+    public static final int SETTINGS_VIDEO_CRT_MODE = 2;
+    public static final int SETTINGS_VIDEO_CRT_BRIGHTNESS = 3;
+    public static final int SETTINGS_VIDEO_ASPECT = 4;
+    public static final int SETTINGS_VIDEO_BACK = 5;
+    public static final int SETTINGS_VIDEO_ITEM_COUNT = 6;
     public static final int SETTINGS_AUDIO_MASTER = 1;
     public static final int SETTINGS_AUDIO_MUSIC = 2;
     public static final int SETTINGS_AUDIO_SFX = 3;
